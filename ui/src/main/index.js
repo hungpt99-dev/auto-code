@@ -377,3 +377,150 @@ ipcMain.handle('cli:run', async (_event, { tool, args }) => {
     return { success: false, error: err.message };
   }
 });
+
+// ─── IPC: Work Folder — scan a directory for git repositories ────────────────
+ipcMain.handle('workfolder:scan', async (_event, { folderPath }) => {
+  const normalized = path.normalize(folderPath);
+  if (!fs.existsSync(normalized)) return { success: false, error: 'Folder not found' };
+
+  let entries;
+  try {
+    entries = fs.readdirSync(normalized, { withFileTypes: true });
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+
+  const repos = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+    const repoPath = path.join(normalized, entry.name);
+    const gitDir   = path.join(repoPath, '.git');
+    if (!fs.existsSync(gitDir)) continue;
+
+    // Read current branch from .git/HEAD (works for normal + bare repos)
+    let branch = 'unknown';
+    try {
+      const head = fs.readFileSync(path.join(gitDir, 'HEAD'), 'utf8').trim();
+      if (head.startsWith('ref: refs/heads/')) {
+        branch = head.replace('ref: refs/heads/', '');
+      } else if (/^[0-9a-f]{40}$/i.test(head)) {
+        branch = head.slice(0, 7); // detached HEAD — show short SHA
+      }
+    } catch { /* leave branch as 'unknown' */ }
+
+    repos.push({ name: entry.name, path: repoPath, branch });
+  }
+
+  return { success: true, repos };
+});
+
+// ─── IPC: Work Folder — read categorised source files for AI context ──────────
+ipcMain.handle('workfolder:readContext', async (_event, { repoPath, maxChars = 20000 }) => {
+  const normalized = path.normalize(repoPath);
+  if (!fs.existsSync(normalized)) return { success: false, error: 'Repo path not found' };
+
+  // Path-based heuristics to bucket files into AI context categories
+  const CATEGORY_PATTERNS = {
+    controllers: [/controller/i, /handler/i, /router/i, /resource/i, /endpoint/i, /routes?\.[jt]sx?$/i],
+    services:    [/service/i,    /usecase/i,  /use.case/i, /business/i, /manager/i, /facade/i],
+    entities:    [/entity/i,     /model/i,    /domain/i,   /schema/i,   /dto/i,     /types?\.[jt]sx?$/i],
+    configs:     [/config/i, /configuration/i, /properties/i,
+                  /application\.(yml|yaml|properties|json)$/i, /setup\.[jt]sx?$/i],
+  };
+
+  const IGNORE_DIRS = new Set([
+    'node_modules', '.git', 'dist', 'build', 'target', 'out', '.next',
+    '__pycache__', 'vendor', '.gradle', 'coverage', '.nyc_output', '.cache',
+    'venv', '.venv', 'env', 'bin', 'obj', 'generated', '.idea', '.vscode',
+  ]);
+
+  const SOURCE_EXTS = new Set([
+    'java', 'kt', 'js', 'ts', 'jsx', 'tsx', 'py', 'go', 'rs',
+    'cs', 'php', 'rb', 'cpp', 'c', 'h', 'xml', 'yml', 'yaml',
+    'json', 'properties',
+  ]);
+
+  const perCategoryMax = Math.floor(maxChars / 4);
+  const context = { controllers: '', services: '', entities: '', configs: '' };
+
+  function scanDir(dir, depth) {
+    if (depth < 0) return;
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+
+    for (const entry of entries) {
+      if (IGNORE_DIRS.has(entry.name) || entry.name.startsWith('.')) continue;
+
+      if (entry.isDirectory()) {
+        scanDir(path.join(dir, entry.name), depth - 1);
+        continue;
+      }
+
+      const ext = entry.name.split('.').pop()?.toLowerCase();
+      if (!SOURCE_EXTS.has(ext)) continue;
+
+      const filePath = path.join(dir, entry.name);
+      const relPath  = path.relative(normalized, filePath);
+
+      // Find which category this file belongs to (first match wins)
+      let category = null;
+      for (const [cat, patterns] of Object.entries(CATEGORY_PATTERNS)) {
+        if (patterns.some((p) => p.test(relPath))) { category = cat; break; }
+      }
+      if (!category) continue;
+      if (context[category].length >= perCategoryMax) continue;
+
+      try {
+        const raw = fs.readFileSync(filePath, 'utf8').slice(0, 3000);
+        context[category] += `\n// === ${relPath} ===\n${raw}\n`;
+      } catch { /* skip unreadable files */ }
+    }
+  }
+
+  scanDir(normalized, 6);
+
+  return {
+    success: true,
+    context: {
+      controllers: context.controllers.slice(0, perCategoryMax),
+      services:    context.services.slice(0, perCategoryMax),
+      entities:    context.entities.slice(0, perCategoryMax),
+      configs:     context.configs.slice(0, perCategoryMax),
+    },
+    totalChars: Object.values(context).reduce((s, v) => s + v.length, 0),
+  };
+});
+
+// ─── IPC: Work Folder — apply a patch file to a local git repo ───────────────
+ipcMain.handle('workfolder:applyPatch', async (_event, { repoPath, patchContent }) => {
+  const normalized = path.normalize(repoPath);
+  if (!fs.existsSync(normalized)) return { success: false, error: 'Repo path not found' };
+  if (!patchContent || typeof patchContent !== 'string' || !patchContent.trim()) {
+    return { success: false, error: 'No patch content provided' };
+  }
+
+  const os      = require('os');
+  const tmpFile = path.join(os.tmpdir(), `auto-code-${Date.now()}.diff`);
+
+  try {
+    fs.writeFileSync(tmpFile, patchContent, 'utf8');
+
+    // Dry-run first — fail fast before touching working tree
+    try {
+      await runGit(normalized, ['apply', '--check', tmpFile]);
+    } catch (checkErr) {
+      return {
+        success: false,
+        error:   'Patch does not apply cleanly.',
+        details: checkErr.message || checkErr.stderr || '',
+      };
+    }
+
+    const result = await runGit(normalized, ['apply', tmpFile]);
+    return { success: true, output: result.stdout || 'Patch applied successfully.' };
+  } catch (err) {
+    return { success: false, error: err.message };
+  } finally {
+    try { fs.unlinkSync(tmpFile); } catch { /* ignore cleanup error */ }
+  }
+});

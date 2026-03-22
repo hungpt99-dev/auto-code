@@ -54,4 +54,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── Repo language detector (counts source file extensions) ──────────────
   repoDetectLanguage: (params) =>
     ipcRenderer.invoke('repo:detectLanguage', params),
+
+  // ── Work Folder (multi-repo workspace manager) ────────────────────────────
+  // Scan a directory for git sub-repos and return [{name, path, branch}]
+  scanWorkFolder: (folderPath) =>
+    ipcRenderer.invoke('workfolder:scan', { folderPath }),
+
+  // Read categorised source files (controllers/services/entities/configs) from a repo
+  readRepoContext: (repoPath, opts = {}) =>
+    ipcRenderer.invoke('workfolder:readContext', { repoPath, ...opts }),
+
+  // Apply a patch string to a repo using git apply (dry-run first)
+  applyPatch: (repoPath, patchContent) =>
+    ipcRenderer.invoke('workfolder:applyPatch', { repoPath, patchContent }),
 });

@@ -183,6 +183,23 @@ export const useAppStore = create(
         set((s) => ({ history: s.history.filter((h) => h.id !== id) })),
 
       clearHistory: () => set({ history: [] }),
+
+      // ── Work Folder ───────────────────────────────────────────────────────────
+      // A Work Folder is a local directory containing multiple git repositories.
+      // It is persisted so the user doesn't need to re-scan on every launch.
+      workFolder: { path: null, repos: [] },
+
+      /**
+       * Set the active work folder and its detected repos.
+       * @param {string} folderPath  Absolute path to the work folder
+       * @param {Array<{name:string,path:string,branch:string}>} repos Detected git repos
+       */
+      setWorkFolder: (folderPath, repos) =>
+        set(() => ({ workFolder: { path: folderPath, repos: Array.isArray(repos) ? repos : [] } })),
+
+      /** Clear the work folder (user clicked × or selected a new one). */
+      clearWorkFolder: () =>
+        set(() => ({ workFolder: { path: null, repos: [] } })),
     }),
     {
       name: 'auto-code-app-store',
@@ -190,6 +207,7 @@ export const useAppStore = create(
         workflows:      state.workflows,
         history:        state.history,
         dashboardStats: state.dashboardStats,
+        workFolder:     state.workFolder,
       }),
     }
   )

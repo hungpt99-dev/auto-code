@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { startGeneration, resetGeneration } from '../store/aiSlice';
 import { TASK_TYPES, LANG_AWARE_TASK_TYPES } from '../constants/taskTypes';
@@ -65,9 +65,9 @@ export default function TaskDrawer({ issue, settings, onClose, onResult }) {
   const dispatch = useDispatch();
   const { generating, completedSteps, genError } = useSelector((s) => s.ai);
   const generationResult = useSelector((s) => s.issues.generationResult);
-  const { addHistoryEntry, recordGeneration } = useAppStore();
+  const { addHistoryEntry, recordGeneration, workFolder } = useAppStore();
 
-  // ── Drawer sub-tab ─────────────────────────────────────────────────────────
+  // ── Drawer sub-tab ───────────────────────────────────────────────────
   const [activeTab,     setActiveTab]     = useState('overview');
 
   const [fullIssue,     setFullIssue]     = useState(issue);
@@ -79,13 +79,26 @@ export default function TaskDrawer({ issue, settings, onClose, onResult }) {
   const [detectResult,  setDetectResult]  = useState(null);
   const [detectError,   setDetectError]   = useState(null);
 
+  // Patch apply state
+  const [applyTargetRepo, setApplyTargetRepo] = useState('');
+  const [applyingPatch,   setApplyingPatch]   = useState(false);
+  const [applyResult,     setApplyResult]     = useState(null);
+
   // Track generation start time for duration recording
   const genStartRef = useRef(null);
 
+  // Merge settings.repos + work folder repos, deduped by path
+  const allRepos = useMemo(() => {
+    const map = new Map();
+    (settings.repos || []).forEach((r) => map.set(r.path, { ...r, source: 'settings' }));
+    (workFolder?.repos || []).forEach((r) => map.set(r.path, { ...r, source: 'workfolder' }));
+    return Array.from(map.values());
+  }, [settings.repos, workFolder?.repos]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Pre-select all repos on mount
   useEffect(() => {
-    setSelectedRepos((settings.repos || []).map((r) => r.path));
-  }, [(settings.repos || []).length]); // eslint-disable-line react-hooks/exhaustive-deps
+    setSelectedRepos(allRepos.map((r) => r.path));
+  }, [allRepos.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset on issue change
   useEffect(() => {
@@ -162,7 +175,7 @@ export default function TaskDrawer({ issue, settings, onClose, onResult }) {
       const detectedType  = TASK_TYPES.find((t) => t.id === json.taskType)?.id ?? 'code';
       const detectedLang  = LANGUAGES.find((l) => l.value === json.language)?.value ?? null;
       const detectedRepos = Array.isArray(json.repos)
-        ? (settings.repos || [])
+        ? allRepos
             .filter((r) => json.repos.some((n) =>
               typeof n === 'string' && r.name.toLowerCase().includes(n.toLowerCase())
             ))
@@ -191,6 +204,16 @@ export default function TaskDrawer({ issue, settings, onClose, onResult }) {
         if (res.language) setLanguage(res.language);
       } catch { /* ignore */ }
     }
+  }
+
+  // ── Apply patch to a local repo ──────────────────────────────────────
+  async function handleApplyPatch() {
+    if (!patch || !applyTargetRepo) return;
+    setApplyingPatch(true);
+    setApplyResult(null);
+    const res = await window.electronAPI.applyPatch(applyTargetRepo, patch);
+    setApplyingPatch(false);
+    setApplyResult(res);
   }
 
   // ── Generate ───────────────────────────────────────────────────────────────
@@ -240,6 +263,13 @@ export default function TaskDrawer({ issue, settings, onClose, onResult }) {
   const hasAiKey    = !!(settings.openaiKey || settings.claudeKey || settings.geminiKey);
   const files       = generationResult?.files ?? [];
   const patch       = generationResult?.patch ?? '';
+
+  // Repo currently set as apply target (default to first selected)
+  useEffect(() => {
+    if (!applyTargetRepo && allRepos.length > 0) {
+      setApplyTargetRepo(selectedRepos[0] || allRepos[0].path);
+    }
+  }, [allRepos.length, selectedRepos]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const TABS = [
     { id: 'overview',  label: 'Overview' },
@@ -387,13 +417,13 @@ export default function TaskDrawer({ issue, settings, onClose, onResult }) {
               </div>
 
               {/* Repos */}
-              {(settings.repos || []).length > 0 && (
+              {allRepos.length > 0 && (
                 <div>
                   <SectionLabel>Repositories to analyze</SectionLabel>
                   <div className="repo-selector">
-                    {(settings.repos || []).map((repo) => (
+                    {allRepos.map((repo) => (
                       <label
-                        key={repo.id}
+                        key={repo.path}
                         className="repo-check-item"
                         style={{ cursor: generating ? 'not-allowed' : 'pointer' }}
                       >
@@ -405,6 +435,9 @@ export default function TaskDrawer({ issue, settings, onClose, onResult }) {
                           style={{ accentColor: 'var(--accent)', width: 15, height: 15, flexShrink: 0 }}
                         />
                         <span className="repo-check-name">{repo.name}</span>
+                        {repo.source === 'workfolder' && (
+                          <span className="wf-source-badge">📁 Work Folder</span>
+                        )}
                         <span className="repo-check-path">{repo.path}</span>
                       </label>
                     ))}
@@ -542,7 +575,56 @@ export default function TaskDrawer({ issue, settings, onClose, onResult }) {
                     >⬇ Download .patch</button>
                   </div>
                   {patch ? (
-                    <pre className="result-patch-code">{patch}</pre>
+                    <>
+                      {/* Apply patch to repo */}
+                      <div className="patch-apply-section">
+                        <SectionLabel>Apply Patch to Repository</SectionLabel>
+                        {allRepos.length > 0 ? (
+                          <div className="patch-apply-row">
+                            <select
+                              className="input"
+                              style={{ maxWidth: 260 }}
+                              value={applyTargetRepo}
+                              onChange={(e) => { setApplyTargetRepo(e.target.value); setApplyResult(null); }}
+                              disabled={applyingPatch}
+                            >
+                              <option value="">Select repository…</option>
+                              {allRepos.map((r) => (
+                                <option key={r.path} value={r.path}>{r.name}</option>
+                              ))}
+                            </select>
+                            <button
+                              className="btn btn-primary btn-sm"
+                              onClick={handleApplyPatch}
+                              disabled={applyingPatch || !applyTargetRepo || !patch}
+                            >
+                              {applyingPatch ? '⏳ Applying…' : '▶ Apply Patch'}
+                            </button>
+                          </div>
+                        ) : (
+                          <p className="patch-apply-hint">
+                            Configure repos in Settings or select a Work Folder to enable direct patch apply.
+                          </p>
+                        )}
+                        {applyResult && (
+                          <div
+                            className="alert"
+                            style={{
+                              marginTop: 8,
+                              background: applyResult.success ? 'rgba(34,197,94,.12)' : 'rgba(239,68,68,.12)',
+                              border: `1px solid ${applyResult.success ? '#22c55e' : '#ef4444'}`,
+                              color: applyResult.success ? '#86efac' : '#fca5a5',
+                            }}
+                          >
+                            {applyResult.success
+                              ? `✅ ${applyResult.output || 'Patch applied successfully.'}`
+                              : `❌ ${applyResult.error || 'Failed to apply patch.'}${applyResult.details ? ` — ${applyResult.details}` : ''}`
+                            }
+                          </div>
+                        )}
+                      </div>
+                      <pre className="result-patch-code">{patch}</pre>
+                    </>
                   ) : (
                     <div className="drawer-no-result">No patch generated for this output.</div>
                   )}

@@ -2,6 +2,7 @@ import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import axios from 'axios';
 import { GENERATION_STEPS, STEP_TIMINGS_MS } from '../constants/aiProviders';
 import { setGenerationResult } from './issuesSlice';
+import { buildMultiRepoContext, hasContext } from '../services/fileContext.service';
 
 // ─── Thunk: full code generation via n8n ─────────────────────────────────────
 
@@ -16,12 +17,21 @@ export const startGeneration = createAsyncThunk(
 
     const clearAll = () => timers.forEach(clearTimeout);
 
-    // Scan selected repos for context (non-fatal)
+    // ── Build repo context ─────────────────────────────────────────────────
+    // Priority: readRepoContext (actual file content) → repoScanTree (tree) → {}
     let repoContext = {};
-    if (selectedRepoPaths.length > 0 && window.electronAPI?.repoScanTree) {
-      try {
-        repoContext = await window.electronAPI.repoScanTree({ paths: selectedRepoPaths });
-      } catch { /* continue without repo context */ }
+
+    if (selectedRepoPaths.length > 0) {
+      // Attempt rich context (controllers / services / entities / configs)
+      const richCtx = await buildMultiRepoContext(selectedRepoPaths, { maxCharsPerRepo: 16000 });
+      if (hasContext(richCtx)) {
+        repoContext = richCtx;
+      } else if (window.electronAPI?.repoScanTree) {
+        // Fallback: directory structure tree
+        try {
+          repoContext = await window.electronAPI.repoScanTree({ paths: selectedRepoPaths });
+        } catch { /* continue without context */ }
+      }
     }
 
     try {

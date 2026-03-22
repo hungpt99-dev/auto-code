@@ -3,6 +3,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import { saveSettings } from '../store/settingsSlice';
 import { AI_PROVIDERS, PROVIDER_MAP } from '../constants/aiProviders';
 import { TASK_TYPES } from '../constants/taskTypes';
+import { useAppStore } from '../store/appStore';
 
 const TASK_IDS = ['code', 'explain', 'bug', 'review', 'test', 'docs', 'refactor'];
 
@@ -25,11 +26,15 @@ export default function Settings() {
   const dispatch = useDispatch();
   const current = useSelector((s) => s.settings);
 
+  const { workFolder, setWorkFolder, clearWorkFolder } = useAppStore();
+
   const [form, setForm] = useState(DEFAULTS);
   const [saved, setSaved] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
   const [newRepo, setNewRepo] = useState({ name: '', path: '' });
+  const [scanningFolder, setScanningFolder] = useState(false);
+  const [scanError, setScanError]           = useState(null);
 
   // Sync from store once loaded
   useEffect(() => {
@@ -64,6 +69,22 @@ export default function Settings() {
     await dispatch(saveSettings(form));
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
+  }
+
+  async function handleSelectWorkFolder() {
+    setScanningFolder(true);
+    setScanError(null);
+    const folderRes = await window.electronAPI.selectFolder();
+    if (!folderRes.success) { setScanningFolder(false); return; }
+
+    const scanRes = await window.electronAPI.scanWorkFolder(folderRes.folderPath);
+    setScanningFolder(false);
+    if (!scanRes.success) {
+      setScanError(scanRes.error || 'Failed to scan folder');
+      return;
+    }
+    setWorkFolder(folderRes.folderPath, scanRes.repos);
+    setScanError(null);
   }
 
   async function handleTestJira() {
@@ -383,6 +404,74 @@ export default function Settings() {
               + Add Repository
             </button>
           </div>
+        </section>
+
+        {/* ── Work Folder ── */}
+        <section className="settings-section">
+          <h2>📁 Work Folder</h2>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 16, lineHeight: 1.5 }}>
+            Select a local directory that contains multiple git repositories. The app will detect
+            each repo, read real source files, and provide them as context to the AI when generating
+            code — no mock data, no manual file pasting.
+          </p>
+
+          <div className="wf-folder-row">
+            <div className="wf-folder-path">
+              {workFolder.path
+                ? <span className="wf-path-badge" title={workFolder.path}>{workFolder.path}</span>
+                : <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>No folder selected</span>
+              }
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={handleSelectWorkFolder}
+                disabled={scanningFolder}
+              >
+                {scanningFolder ? '🔍 Scanning…' : '📂 Select Work Folder'}
+              </button>
+              {workFolder.path && (
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => { clearWorkFolder(); setScanError(null); }}
+                >
+                  ✕ Clear
+                </button>
+              )}
+            </div>
+          </div>
+
+          {scanError && (
+            <div className="alert alert-error" style={{ marginTop: 12 }}>{scanError}</div>
+          )}
+
+          {workFolder.repos.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <div className="drawer-section-label" style={{ marginBottom: 8 }}>
+                Detected Repositories ({workFolder.repos.length})
+              </div>
+              <div className="wf-repo-grid">
+                {workFolder.repos.map((repo) => (
+                  <div key={repo.path} className="wf-repo-card">
+                    <div className="wf-repo-icon">📦</div>
+                    <div className="wf-repo-info">
+                      <div className="wf-repo-name">{repo.name}</div>
+                      <div className="wf-repo-path">{repo.path}</div>
+                    </div>
+                    <div className="wf-repo-branch">⎇ {repo.branch}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {workFolder.path && workFolder.repos.length === 0 && !scanningFolder && (
+            <div className="alert alert-error" style={{ marginTop: 12 }}>
+              No git repositories found. Check that subdirectories contain a <code>.git</code> folder.
+            </div>
+          )}
         </section>
 
         {/* ── Workflow Configuration (per task type) ── */}
