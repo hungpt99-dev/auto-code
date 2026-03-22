@@ -1,16 +1,23 @@
 # Auto Code
 
-A Windows desktop application that fetches Jira issues, generates Java Spring Boot code using OpenAI / Claude / Gemini via an n8n workflow, displays results in a tabbed code viewer, and lets you download or post them back to Jira — all without touching your repository.
+A Windows desktop application for AI-assisted software development. It connects to Jira, triggers multi-provider AI code generation (OpenAI / Claude / Gemini) through an n8n workflow, and presents results in a production-ready 5-tab UI with a Kanban board, workflow builder, generation history, and interactive charts — all without touching your repository.
+
+> **v1.2.0** — Full UI redesign: 5-tab layout · Dashboard with recharts analytics · Kanban board · Workflow builder · Generation history · Zustand state persistence
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────┐
-│  Desktop UI             │   Electron 28 + React 18 + Redux Toolkit
-│  (renderer process)     │
-└────────────┬────────────┘
+┌──────────────────────────────────────────────────────┐
+│  Desktop UI  (Electron 28 + React 18)                │
+│                                                      │
+│  Dashboard │ Kanban │ Workflows │ History │ Settings  │
+│                                                      │
+│  Redux Toolkit  ─────────────────── Zustand          │
+│  (issues, ai, git, settings)       (stats, workflows,│
+│                                     history)         │
+└────────────┬─────────────────────────────────────────┘
              │ IPC (contextBridge)
 ┌────────────▼────────────┐
 │  Main process (Node.js) │   electron-store · axios · fs · dialog
@@ -19,8 +26,8 @@ A Windows desktop application that fetches Jira issues, generates Java Spring Bo
 ┌────────────▼────────────┐
 │  n8n Workflow Engine    │   Runs locally on Windows
 └──────┬──────────────────┘
-       │                   │
-  Jira REST API       OpenAI API
+       │                        │
+  Jira REST API       AI API (OpenAI / Claude / Gemini)
 ```
 
 ---
@@ -41,24 +48,28 @@ auto_code/
 │   │   │   ├── index.js              ← Electron main process
 │   │   │   └── preload.js            ← contextBridge API
 │   │   └── renderer/
-│   │       ├── App.jsx
+│   │       ├── App.jsx               ← routes (5 tabs)
 │   │       ├── index.jsx
 │   │       ├── components/
-│   │       │   ├── Layout.jsx
-│   │       │   ├── Dashboard.jsx     ← Jira issue list
-│   │       │   ├── TaskDetail.jsx    ← Issue detail + Generate button
-│   │       │   ├── ResultScreen.jsx  ← Code viewer + actions
-│   │       │   ├── CodeViewer.jsx    ← Prism.js syntax highlighter
+│   │       │   ├── Layout.jsx        ← sidebar nav
+│   │       │   ├── Dashboard.jsx     ← analytics + charts
+│   │       │   ├── KanbanBoard.jsx   ← Jira issue board
+│   │       │   ├── TaskDrawer.jsx    ← issue detail + generate
+│   │       │   ├── WorkflowsTab.jsx  ← workflow builder
+│   │       │   ├── HistoryTab.jsx    ← generation history
+│   │       │   ├── ResultScreen.jsx  ← code viewer + actions
 │   │       │   ├── Settings.jsx
-│   │       │   ├── Loader.jsx
-│   │       │   └── ErrorBoundary.jsx
+│   │       │   └── StepProgress.jsx
 │   │       ├── services/
 │   │       │   ├── n8n.service.js    ← POST to n8n webhook
 │   │       │   └── file.service.js   ← ZIP + PATCH download
 │   │       ├── store/
-│   │       │   ├── index.js
+│   │       │   ├── index.js          ← Redux store
 │   │       │   ├── issuesSlice.js
-│   │       │   └── settingsSlice.js
+│   │       │   ├── aiSlice.js
+│   │       │   ├── gitSlice.js
+│   │       │   ├── settingsSlice.js
+│   │       │   └── appStore.js       ← Zustand (stats/workflows/history)
 │   │       └── styles/
 │   │           └── global.css
 │   ├── .env.example
@@ -124,6 +135,8 @@ Start the app (see next step), then open **Settings** and fill in:
 | Email | Your Atlassian account email |
 | API Token | Token from id.atlassian.com → Security → API tokens |
 | OpenAI API Key | From platform.openai.com |
+| Claude API Key | From console.anthropic.com (optional) |
+| Gemini API Key | From aistudio.google.com (optional) |
 | n8n URL | `http://localhost:5678` (default) |
 
 All values are stored locally via `electron-store` (never sent anywhere except the APIs you configure).
@@ -151,43 +164,57 @@ The installer is written to `ui/release/`.
 ## Usage
 
 ### Dashboard
-- Lists Jira issues using the JQL query shown in the search bar.
-- Edit the JQL and press **Refresh** or hit `Enter` to re-query.
-- Click any issue card to open its detail view.
+- **Stat cards** — total tasks, in-progress, AI-generated, completed counts.
+- **Bar chart** — tasks breakdown by status (Done / In Progress / To Do / Review).
+- **Line chart** — AI generations per day over the last 7 days.
+- **AI Activity panel** — today's generation count, success/failed statistics, average generation time, success-rate progress bar.
+- **Recent Tasks** — last 8 issues from Jira, click any row to jump to the Kanban board.
+- **Quick Actions** — one-click navigation to Fetch Jira, Kanban, Workflows, History.
 
-### Task Detail
-- Shows the full issue: title, description, assignee, comments.
-- Press **🤖 Generate Code** to send the issue to n8n + OpenAI.
-- Generation typically takes 30–90 seconds depending on complexity.
+### Kanban Board
+- Draggable cards organised by status column (To Do / In Progress / Review / Done).
+- Click any card to open the **Task Drawer** on the right.
+- Cards show issue key, priority badge, assignee, and comment count.
 
-### Result Screen
-- **Summary** — one-sentence description of what the AI implemented.
-- **Files panel** — click a file name to jump to it in the viewer.
-- **Tab bar** — switch between generated files; a `patch.diff` tab appears if a diff was returned.
-- **📦 Download ZIP** — saves all files in a single archive via a native Save dialog.
-- **🔀 Download PATCH** — saves the unified diff to a `.diff` file; apply with `git apply patch.diff`.
-- **📨 Send to Jira** — posts a comment to the original issue summarising the generated files.
+### Task Drawer
+The drawer has four sub-tabs:
 
-### Git Panel
-- Lists quick-action buttons: Status, Log, Diff (staged), Diff (unstaged), Branches, Stash list.
-- **Commit form** — optionally stages all changes (`git add -A`) then commits with your message.
-- **Apply AI Patch** — saves the generated diff to a location you choose, then runs `git apply` against the repo.
-- **Dry-run check** — runs `git apply --check` to verify the patch applies cleanly before touching any files.
-- **Custom command** — type any git subcommand; `push` (and variants like `send-pack`) are blocked at the IPC layer.
+| Tab | Contents |
+|-----|----------|
+| **Overview** | Full issue title, metadata (priority / status / assignee / type), description, comments |
+| **Generate** | AI provider selector, task type, repos, language, generate button, live step progress |
+| **Files** | Generated source files with syntax-highlighted code viewer, Download ZIP |
+| **Patch** | Unified diff output, Download `.patch` file |
+
+On successful generation the drawer automatically switches to the **Files** tab and records an entry in History and the Dashboard stats.
+
+### Workflows
+- View and manage AI generation workflows (Code Generation, Bug Fix, Code Review, Test Generation — and any custom ones).
+- Each workflow has configurable **steps** with editable labels and prompt templates.
+- Reorder steps with ↑/↓ buttons; add or remove steps freely.
+- Toggle a workflow active/inactive; override its n8n webhook URL.
+- Create new workflows from the **+ New Workflow** button.
+
+### History
+- Full log of every AI generation run (issue key, task type, language, file count, success/failure, timestamp).
+- **Search** by issue key or summary; **filter** by task type.
+- Click any entry to see the full detail: summary, generated files, patch diff.
+- **Export** any entry as JSON; **Clear All** with confirmation guard.
+
+### Settings
+- **Jira** — base URL, email, API token (+ Test Connection).
+- **AI Providers** — default provider; per-provider API key and model picker (OpenAI / Claude / Gemini).
+- **n8n** — webhook base URL.
+- **Local Repository** — folder path picker for git panel operations.
 
 ---
 
-## Git Policy
+## State Management
 
-| Operation | Allowed |
-|-----------|---------|
-| `git status`, `diff`, `log`, `show` | ✅ |
-| `git add`, `git commit` | ✅ |
-| `git branch`, `git checkout`, `git merge`, `git rebase` | ✅ |
-| `git stash`, `git apply`, `git reset` | ✅ |
-| `git tag`, `git cherry-pick` | ✅ |
-| **`git push`** (any remote write) | ❌ Blocked |
-| `git send-pack`, `git push-pack`, `--mirror` | ❌ Blocked |
+| Store | Library | Persisted | Contents |
+|-------|---------|-----------|----------|
+| Redux Toolkit | Redux | electron-store | Jira issues, AI generation state, git state, settings |
+| appStore | Zustand | localStorage | Dashboard stats, workflows (CRUD), generation history |
 
 ---
 
@@ -199,12 +226,10 @@ The installer is written to `ui/release/`.
 | 2 | **Validate & Prepare** | Checks required fields; builds Basic-Auth header |
 | 3 | **Fetch Jira Issue** | `GET /rest/api/3/issue/:key` via HTTP Request |
 | 4 | **Build AI Prompt** | Extracts text from ADF; constructs structured prompt |
-| 5 | **Call OpenAI** | `POST /v1/chat/completions` (model: `gpt-4o`) |
+| 5 | **Call AI** | Routes to OpenAI / Claude / Gemini based on `provider` field |
 | 6 | **Parse AI Response** | Strips markdown fences; validates JSON shape |
 | 7 | **Respond to Webhook** | Returns `{ summary, files, patch }` as JSON |
 | 8 | **Error Handler** | Catches failures; returns 500 with error message |
-
-To use a different model (e.g. `gpt-4-turbo`, `gpt-3.5-turbo`), edit node **5 — Call OpenAI** and change the `model` field in the JSON body.
 
 ---
 
@@ -221,7 +246,7 @@ You can also pre-set defaults via a `.env` file — copy `.env.example` and fill
 - All API credentials are stored locally in `electron-store` — never transmitted to any third party.
 - n8n is restricted to `localhost` by default (`--tunnel` is off).
 - The Electron renderer uses `contextIsolation: true` and `nodeIntegration: false`; only the explicitly exposed `electronAPI` surface is available to React code.
-- The repository is **read-only**: no git operations are performed at any point.
+- The repository is **read-only from a remote perspective**: `git push` is blocked at the IPC layer.
 
 ---
 
@@ -234,22 +259,30 @@ You can also pre-set defaults via a `.env` file — copy `.env.example` and fill
 | 500 error from n8n | Open n8n UI → Executions → inspect the failed run for details |
 | OpenAI timeout | Large tasks may exceed the free-tier rate limit; try a smaller, scoped ticket |
 | Blank window on startup | Run `npm run dev` (not `npm start`) and check the DevTools console |
+| Charts not rendering | Ensure `recharts` is installed (`npm install` in `ui/`) |
 
 ---
 
 ## Limitations
 
 - AI output requires **manual developer review** before use in production.
-- **`git push` to remote is disabled** — no code leaves your machine automatically. All other local git operations (commit, branch, stash, apply, merge, rebase, etc.) are fully supported via the Git panel.
-- Large Jira descriptions may be truncated by the OpenAI token limit — keep tickets focused.
+- **`git push` to remote is disabled** — no code leaves your machine automatically.
+- Large Jira descriptions may be truncated by the AI token limit — keep tickets focused.
 - `patch.diff` is AI-generated and may not apply cleanly to an existing codebase — always run a dry-run check first.
 
 ---
 
 ## Roadmap
 
+- [x] Multi-provider AI (OpenAI / Claude / Gemini)
+- [x] Kanban board with drag-and-drop
+- [x] Task Drawer with Overview / Generate / Files / Patch sub-tabs
+- [x] Workflow builder with step-level prompt editing
+- [x] Generation history with search and export
+- [x] Dashboard analytics (recharts bar + line charts)
+- [x] Zustand persistent state (stats / workflows / history)
 - [ ] Inline diff viewer (side-by-side)
-- [ ] AI code review pass (second prompt)
-- [ ] RAG / multi-file context (provide existing files to the AI)
-- [ ] Support for Claude / Gemini models
-- [ ] Slack notification on generation complete
+- [ ] RAG / multi-file context (feed existing source files to the AI)
+- [ ] Slack / Teams notification on generation complete
+- [ ] Dark / light theme toggle
+

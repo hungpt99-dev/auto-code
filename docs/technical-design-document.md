@@ -1,8 +1,9 @@
 # 📄 TECHNICAL DESIGN DOCUMENT
 
-## Auto Code (Windows UI + n8n + Jira + Multi-Provider AI + Copilot CLI)
+## Auto Code — v1.2.0 (Windows UI + n8n + Jira + Multi-Provider AI + Copilot CLI)
 
 > **Last Updated:** March 22, 2026
+> **Version:** 1.2.0 — Full UI redesign: 5-tab layout · Dashboard analytics · Kanban · Workflow builder · History · Zustand
 > **Status:** ✅ Implemented & Buildable
 
 ---
@@ -26,29 +27,25 @@ Build a **Windows desktop application** that:
 # 2. 🧱 System Architecture
 
 ```
-+------------------------------------+
-|   Desktop UI (Electron 28 + React) |
-|                                    |
-|  Dashboard | AI Panel | Git | Settings
-+--------+-----------+---------------+
-         |           |               |
-         | Webhook   | IPC           | IPC
-         v           v               v
-  +------------+  +----------+  +---------+
-  |   n8n      |  | ai:quick |  | cli:run |
-  | (Workflow) |  |  Ask IPC |  | (gh CLI)|
-  +-----+------+  +-----+----+  +---------+
-        |               |
-        v               v
-  +-----+---------+--+--+------------+
-  | OpenAI GPT-4o | Claude 3.5 | Gemini Pro |
-  +--------------++------------+------------+
-        |
-        v
-  +------------+
-  |   Jira     |
-  | REST API   |
-  +------------+
++--------------------------------------------------------------+
+|   Desktop UI  (Electron 28 + React 18)                       |
+|                                                              |
+|  Dashboard | Kanban | Workflows | History | Settings         |
+|                                                              |
+|  Redux Toolkit ─────────────────────── Zustand              |
+|  (issues, ai, git, settings)          (stats, workflows,     |
+|                                        history)              |
++--------+------------------------------------------------------+
+         |  IPC (contextBridge)
++--------▼────────────+
+|  Main process        |    electron-store · axios · fs · dialog
++--------+─────────────+
+         |  HTTP (localhost:5678)
++--------▼────────────+
+|  n8n Workflow Engine |    Runs locally on Windows
++------+───────────────+
+       |                      |
+  Jira REST API     AI API (OpenAI / Claude / Gemini)
 ```
 
 ### Data Flow
@@ -74,7 +71,9 @@ Build a **Windows desktop application** that:
 |-------|------------|
 | Shell | Electron 28 (Chromium renderer + Node main) |
 | UI | React 18 + React Router v6 (HashRouter) |
-| State | Redux Toolkit (issues, settings, git, ai slices) |
+| State (server) | Redux Toolkit — issues, settings, git, ai slices |
+| State (client) | Zustand 4 — dashboardStats, workflows, history (persisted to localStorage) |
+| Charts | Recharts 2 — BarChart (tasks by status), LineChart (AI usage 7 days) |
 | Build | Webpack 5 + Babel (JSX, async/await) |
 | Storage | `electron-store` (encrypted local settings) |
 | HTTP | `axios` |
@@ -84,23 +83,26 @@ Build a **Windows desktop application** that:
 
 | Route | Component | Purpose |
 |-------|-----------|----------|
-| `/` | Dashboard | Jira issue list |
-| `/issue/:key` | TaskDetail | Issue detail + Generate Code button + step progress |
-| `/issue/:key/result` | ResultScreen | Code viewer, ZIP/PATCH download, Jira comment |
-| `/ai` | AiPanel | Quick Ask (multi-provider) + Copilot CLI |
-| `/git` | GitPanel | Local git operations |
-| `/settings` | Settings | All configuration |
+| `/` | Dashboard | Analytics: stat cards, recharts bar+line, AI activity, recent tasks |
+| `/kanban` | KanbanBoard | Jira issue board (drag-drop columns); opens TaskDrawer on click |
+| `/workflows` | WorkflowsTab | Build & manage AI generation workflows with editable step prompts |
+| `/history` | HistoryTab | Full AI generation history with search, filter, detail & export |
+| `/settings` | Settings | All configuration (Jira, AI providers, n8n, repos) |
+| `/issue/:key/result` | ResultScreen | Code viewer, ZIP/PATCH download, send to Jira |
 
 ### Responsibilities
 
-- Display Jira issues
+- Display Jira issues on a Kanban board (drag-drop)
+- Task Drawer: Overview / Generate / Files / Patch sub-tabs
 - Trigger AI generation with step-by-step progress UI
-- Render code results with syntax highlighting (Prism.js)
+- Record generation results into Zustand history + dashboard stats
+- Render code results with syntax highlighting
 - Download generated code as ZIP or PATCH
 - Send comments back to Jira
-- Local git panel (all ops except push)
-- Multi-provider AI quick-ask
-- GitHub Copilot CLI integration
+- Manage reusable AI generation workflows (CRUD, step editing, reorder)
+- Browse and export generation history
+- Dashboard analytics (recharts charts, AI activity panel)
+- Multi-provider AI quick-ask via Settings
 
 ---
 
@@ -155,108 +157,138 @@ Build a **Windows desktop application** that:
 
 ---
 
-# 4. 🖥️ UI Design
+# 4. 🖥️ UI Design — v1.2.0
 
 ---
 
 ## 4.1 Dashboard
 
 ```
-------------------------------------------------
-| JIRA-123 | Create Order API   | [Generate]   |
-| JIRA-124 | Fix Payment Bug    | [Generate]   |
-------------------------------------------------
+┌─────────────────────────────────────────────────────────────────┐
+│  Total Tasks  │  In Progress  │  AI Generated  │  Completed     │  ← Stat cards
+├──────────────────────────────┬──────────────────────────────────┤
+│  Tasks by Status (BarChart)  │  AI Generations / Day (LineChart) │  ← recharts
+├──────────────────────────────┴──────────────────────────────────┤
+│  AI Activity Panel                    │  Recent Tasks            │
+│  Today: 3  Success: 2  Failed: 1      │  JIRA-123  Create Order  │
+│  Avg time: 18s                        │  JIRA-124  Fix Bug       │
+│  Success rate: ████████░░  66%        │  ...                     │
+├───────────────────────────────────────┴──────────────────────────┤
+│  [Fetch Jira]  [Kanban]  [Workflows]  [History]                  │  ← Quick actions
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 4.2 Task Detail
+## 4.2 Kanban Board
 
 ```
-Title: Create Order API
-Priority: Medium  |  Status: In Progress  |  Assignee: John
-
-Description:
-...
-
-Using 🧠 OpenAI • gpt-4o
-
-[ 🤖 Generate Code ]
-
---- Step Progress (shown while generating) ---
-  ✓  Connecting to n8n
-  ✓  Fetching Jira issue details
-  ✓  Analysing requirements
-  ◯  Planning architecture          ← current
-  ○  Generating source files
-  ○  Writing unit tests
-  ○  Building diff patch
-  ○  Finalising output
+┌──────────────┬──────────────┬──────────────┬──────────────┐
+│   To Do      │  In Progress │    Review    │    Done      │
+├──────────────┼──────────────┼──────────────┼──────────────┤
+│ [JIRA-123]   │ [JIRA-127]   │ [JIRA-122]   │ [JIRA-120]   │
+│ Create Order │ Fix Payment  │ Code Review  │ Auth API     │
+│ Medium · 2💬 │ High · 0💬   │ Low · 1💬    │ Done ✓       │
+└──────────────┴──────────────┴──────────────┴──────────────┘
+        ← Click any card → Task Drawer opens on right
 ```
 
 ---
 
-## 4.3 Result Screen
+## 4.3 Task Drawer (right panel)
 
 ```
----------------------------------------
-Summary:
-- Added POST /orders API
-
-Files:
-- OrderController.java
-- OrderService.java
-
-Tabs:
-[Controller] [Service] [Test]
-
-Actions:
-[Download ZIP] [Download PATCH] [Send to Jira]
----------------------------------------
+┌──────────────────────────────────────────┐
+│  JIRA-123  Create Order API              │
+│  [Overview] [Generate] [Files] [Patch]   │  ← Sub-tabs
+├──────────────────────────────────────────┤
+│  Overview tab:                           │
+│    Priority: Medium | Status: In Prog    │
+│    Assignee: John   | Type: Story        │
+│    Description: ...                      │
+│    Comments (2): ...                     │
+│    [ Configure & Generate → ]            │
+├──────────────────────────────────────────┤
+│  Generate tab:                           │
+│    Task type: [Code Generation ▾]        │
+│    Language:  [Java ▾]                   │
+│    Provider:  [OpenAI ▾]  Model: gpt-4o  │
+│    Repos: ✓ my-service                   │
+│    [ 🤖 Generate Code ]                  │
+│    ✓ Fetching Jira  ✓ Analysing ...      │  ← StepProgress
+├──────────────────────────────────────────┤
+│  Files tab (after generation):           │
+│    OrderController.java  ─── [copy]      │
+│    ┌──────────────────────────────────┐  │
+│    │  @RestController                 │  │
+│    │  public class OrderController {  │  │
+│    └──────────────────────────────────┘  │
+│    [ Download ZIP ]  [ Regenerate ]      │
+├──────────────────────────────────────────┤
+│  Patch tab:                              │
+│    ┌──────────────────────────────────┐  │
+│    │  diff --git a/...                │  │
+│    └──────────────────────────────────┘  │
+│    [ Download .patch ]                   │
+└──────────────────────────────────────────┘
 ```
 
 ---
 
-## 4.4 Settings
+## 4.4 Workflows
+
+```
+┌────────────────────────┬─────────────────────────────────────────┐
+│  Workflows             │  Code Generation  [Active ●]            │
+│  ─────────────         │  ─────────────────────────────────────  │
+│  ● Code Generation  ✓  │  Step 1: Analyse Requirements          │
+│  ○ Bug Fix          ─  │  [ Edit prompt... ]                     │
+│  ○ Code Review      ─  │                                         │
+│  ○ Test Generation  ─  │  Step 2: Generate Code Files            │
+│  ─────────────         │  [ Edit prompt... ]  [↑] [↓] [✕]       │
+│  [ + New Workflow ]    │                                         │
+│                        │  [ + Add Step ]                         │
+│                        │                                         │
+│                        │  Webhook: [http://localhost:5678/...]   │
+└────────────────────────┴─────────────────────────────────────────┘
+```
+
+---
+
+## 4.5 History
+
+```
+┌────────────────────────┬─────────────────────────────────────────┐
+│  Search: [_________]  Type: [All ▾]                              │
+├────────────────────────┼─────────────────────────────────────────┤
+│  ✅ JIRA-123           │  JIRA-123 · Create Order API            │
+│  Code Gen · Java · 3f  │  ─────────────                          │
+│  Mar 22 14:30          │  [Summary] [Files] [Patch]              │
+│                        │  Summary: Added POST /orders endpoint   │
+│  ❌ JIRA-124           │  Files: OrderController.java, ...       │
+│  Bug Fix · Java · 0f   │  [ Export JSON ]                        │
+│  Mar 22 13:10          │                                         │
+│  ─────────────         │                                         │
+│  [ Clear All ]         │                                         │
+└────────────────────────┴─────────────────────────────────────────┘
+```
+
+---
+
+## 4.6 Settings
 
 | Section | Fields |
 |---------|--------|
 | Jira | Base URL, Email, API Token (+ Test Connection button) |
 | AI Providers | Default provider selector; per-provider API key + model picker for OpenAI / Claude / Gemini |
 | n8n | Webhook base URL (default: `http://localhost:5678`) |
-| Local Repository | Repo path (folder picker), used by Git panel |
+| Local Repositories | Add / remove repo paths (folder picker) |
 
 > API keys are stored via `electron-store` — encrypted on disk, never sent to any third party except the selected AI provider.
 
 ---
 
-## 4.5 Git Panel
-
-```
----------------------------------------
-Repo: C:\projects\my-service
-
-[ Status ] [ Log ] [ Diff ] [ Branches ]
-
-Commit:
-  [ Stage all ☑ ]  Message: ____________
-  [ Commit ]
-
-Apply AI Patch:
-  [ Save & Apply ]  [ Dry-run Check ]
-
-Custom: git ________________________ [ Run ]
-
-Output:
-  $ git status
-  On branch feature/order-api
-  nothing to commit, working tree clean
----------------------------------------
-⚠️  git push is DISABLED (no remote writes)
----------------------------------------
-```
-
-### Git Security Policy
+## 4.7 Git Security Policy
 
 | Command | Allowed? |
 |---------|----------|
@@ -265,41 +297,6 @@ Output:
 | `git apply`, `merge`, `rebase`, `reset` | ✅ Yes |
 | `git push` | ❌ **Blocked** |
 | `git push-pack`, `git send-pack`, `--mirror` | ❌ **Blocked** |
-
-## 4.6 AI Panel
-
-```
-🧠 OpenAI ● | 🤖 Claude ○ | ✨ Gemini ●
-
-[ 💬 Quick Ask ]   [ 🐙 Copilot CLI ]
-
---- Quick Ask Tab ---
-Provider: ● OpenAI  ○ Claude  ✨ Gemini
-Model:    [gpt-4o ▾]
-
-Question: ________________________________
-         ________________________________
-
-[ 💬 Ask ]
-
-Response:
-  Here is how to structure a Spring Boot
-  service layer...
-  ```java
-  @Service
-  public class OrderService { ... }
-  ```
-
---- Copilot CLI Tab ---
-[ suggest ]  [ explain ]
-Target: [ shell ] [ git ] [ gh ]
-
-$ gh copilot suggest _________________ [ ▶ Run ]
-
-Output:
-  $ gh copilot suggest "list java files"
-  > find . -name "*.java"
-```
 
 ---
 
@@ -385,7 +382,20 @@ else                             → POST api.openai.com/v1/chat/completions
 
 ---
 
-## Step 4 — Step Progress (client-side)
+## Step 4 — Zustand State Recording
+
+After a successful generation, `TaskDrawer` calls:
+```js
+addHistoryEntry({ issueKey, summary, taskType, language, files, patch, success, durationSec })
+recordGeneration({ success, durationSec })
+```
+- `addHistoryEntry` stores the entry in `history[]` (max 200, persisted to localStorage)
+- `recordGeneration` updates `dashboardStats` (count, successCount, failedCount, avgGenTimeSec, aiUsageLast7Days)
+- The drawer auto-switches to the **Files** sub-tab on completion.
+
+---
+
+## Step 5 — Step Progress (client-side)
 
 While the n8n call is in-flight, the UI fires timers at fixed intervals to simulate progress:
 
@@ -400,14 +410,13 @@ While the n8n call is in-flight, the UI fires timers at fixed intervals to simul
 | 6 | Building diff patch | 27 s |
 | 7 | Finalising output | 31 s |
 
-## Step 5 — UI Rendering
+## Step 6 — UI Rendering
 
 - Parse `{ summary, files[], patch }` from n8n response
-- Display in ResultScreen:
-  - Summary badge
-  - File list with per-file code viewer (Prism.js)
-  - Download ZIP / Download PATCH buttons
-  - Send to Jira comment button
+- Task Drawer switches to **Files** sub-tab automatically
+- Files tab: per-file code viewer with Download ZIP button
+- Patch tab: unified diff display with Download `.patch` button
+- ResultScreen (standalone): Summary + file tab bar + Download ZIP/PATCH + Send to Jira
 
 ---
 
@@ -559,13 +568,24 @@ npm run package
 
 # 12. 🚀 Future Enhancements
 
-- Inline code diff viewer (side-by-side)
-- AI-powered code review (flag issues before commit)
-- Multi-file RAG context (feed existing codebase to AI)
-- Slack / Teams integration
-- Team collaboration (shared Jira filters)
-- Streaming AI responses (SSE / WebSocket)
-- Support for more AI providers (Mistral, Ollama local models)
+**Completed in v1.2.0:**
+- [x] Kanban board with drag-drop columns
+- [x] Task Drawer sub-tabs (Overview / Generate / Files / Patch)
+- [x] Workflow builder with per-step prompt editing and reorder
+- [x] Generation history with search, filter, detail, export
+- [x] Dashboard analytics (recharts bar + line charts, AI activity)
+- [x] Zustand persistent state for stats / workflows / history
+- [x] Multi-provider support (OpenAI / Claude / Gemini)
+
+**Planned:**
+- [ ] Inline code diff viewer (side-by-side)
+- [ ] AI-powered code review (flag issues before commit)
+- [ ] Multi-file RAG context (feed existing codebase to AI)
+- [ ] Slack / Teams notification on generation complete
+- [ ] Dark / light theme toggle
+- [ ] Team collaboration (shared Jira filters)
+- [ ] Streaming AI responses (SSE / WebSocket)
+- [ ] Support for more AI providers (Mistral, Ollama local models)
 
 ---
 
@@ -599,7 +619,7 @@ AI → Suggest → Developer validates → Commit
 
 ---
 
-# � Project Structure
+# 14. 📁 Project Structure
 
 ```
 auto_code/
@@ -618,38 +638,39 @@ auto_code/
 │       │   ├── git.js                ← git runner (push blocked)
 │       │   └── cli.js                ← gh copilot runner
 │       └── renderer/
-│           ├── App.jsx
+│           ├── App.jsx               ← 5-tab routing
 │           ├── index.jsx
 │           ├── constants/
-│           │   └── aiProviders.js    ← provider definitions, step timings
+│           │   ├── aiProviders.js    ← provider definitions, step timings
+│           │   └── taskTypes.js
 │           ├── store/
-│           │   ├── index.js
+│           │   ├── index.js          ← Redux store
 │           │   ├── issuesSlice.js
 │           │   ├── settingsSlice.js
 │           │   ├── gitSlice.js
-│           │   └── aiSlice.js        ← startGeneration, quickAsk, copilotCli
+│           │   ├── aiSlice.js        ← startGeneration, completedSteps
+│           │   └── appStore.js       ← Zustand (stats/workflows/history)
 │           ├── services/
-│           │   ├── n8n.service.js
-│           │   └── file.service.js
+│           │   ├── n8n.service.js    ← POST to n8n webhook
+│           │   └── file.service.js   ← ZIP + PATCH download
 │           ├── components/
-│           │   ├── Layout.jsx
-│           │   ├── Dashboard.jsx
-│           │   ├── TaskDetail.jsx    ← step progress
-│           │   ├── ResultScreen.jsx
-│           │   ├── CodeViewer.jsx
-│           │   ├── AiPanel.jsx       ← Quick Ask + Copilot CLI
-│           │   ├── GitPanel.jsx
-│           │   ├── Settings.jsx      ← multi-provider config
-│           │   ├── Loader.jsx
-│           │   └── ErrorBoundary.jsx
+│           │   ├── Layout.jsx        ← sidebar 5-tab navigation
+│           │   ├── Dashboard.jsx     ← analytics + recharts
+│           │   ├── KanbanBoard.jsx   ← drag-drop Jira board
+│           │   ├── TaskDrawer.jsx    ← issue detail + AI generate (sub-tabs)
+│           │   ├── WorkflowsTab.jsx  ← workflow CRUD + step editor
+│           │   ├── HistoryTab.jsx    ← generation history + detail
+│           │   ├── ResultScreen.jsx  ← standalone code viewer
+│           │   ├── StepProgress.jsx  ← generation step indicators
+│           │   └── Settings.jsx      ← all config (Jira, AI, n8n, repos)
 │           └── styles/
-│               └── global.css
+│               └── global.css       ← full design system (~1850 lines)
 └── README.md
 ```
 
 ---
 
-# 🔥 Final Summary
+# 15. 🔥 Final Summary — v1.2.0
 
 This system delivers:
 
@@ -657,12 +678,22 @@ This system delivers:
 >
 > ✅ Windows-native UI (Electron 28 + React 18)
 >
+> ✅ 5-tab production UI (Dashboard · Kanban · Workflows · History · Settings)
+>
+> ✅ Dashboard analytics (recharts + AI activity panel + recent tasks)
+>
+> ✅ Kanban board with Task Drawer (Overview / Generate / Files / Patch)
+>
+> ✅ Workflow builder — CRUD, per-step prompt editing, reorder
+>
+> ✅ Generation history — search, filter, detail view, JSON export
+>
+> ✅ Zustand persistent state (stats, workflows, history)
+>
 > ✅ Jira integration (fetch tasks, post comments)
 >
 > ✅ Step-by-step code generation progress
 >
-> ✅ GitHub Copilot CLI integration
->
-> ✅ Local Git panel — no push risk
+> ✅ Local Git panel — no remote push risk
 >
 > ✅ Security-first (contextIsolation, execFile, key allowlist)
