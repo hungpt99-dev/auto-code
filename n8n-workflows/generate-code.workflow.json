@@ -1,0 +1,181 @@
+{
+  "name": "AI Code Generator — Jira + Multi-Provider AI",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "generate",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "a1b2c3d4-0000-0000-0000-000000000001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "generate-webhook-id"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate incoming payload\nconst body = $input.first().json.body || $input.first().json;\n\nif (!body.issueKey)   throw new Error('issueKey is required');\nif (!body.jiraUrl)    throw new Error('jiraUrl is required');\nif (!body.jiraEmail)  throw new Error('jiraEmail is required');\nif (!body.jiraToken)  throw new Error('jiraToken is required');\n\nconst provider = body.provider || 'openai';\nconst hasKey = body.openaiKey || body.claudeKey || body.geminiKey;\nif (!hasKey) throw new Error('At least one AI provider API key is required');\n\n// Build basic auth header for Jira\nconst basicAuth = 'Basic ' + Buffer.from(body.jiraEmail + ':' + body.jiraToken).toString('base64');\n\nreturn [{\n  json: {\n    issueKey:  body.issueKey,\n    jiraUrl:   body.jiraUrl.replace(/\\/$/, ''),\n    jiraEmail: body.jiraEmail,\n    jiraToken: body.jiraToken,\n    provider,\n    model:     body.model || null,\n    openaiKey: body.openaiKey || '',\n    claudeKey: body.claudeKey || '',\n    geminiKey: body.geminiKey || '',\n    basicAuth,\n  },\n}];"
+      },
+      "id": "a1b2c3d4-0000-0000-0000-000000000002",
+      "name": "Validate & Prepare",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.jiraUrl }}/rest/api/3/issue/{{ $json.issueKey }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "={{ $json.basicAuth }}" },
+            { "name": "Accept",        "value": "application/json" }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "fields", "value": "summary,description,issuetype,status,assignee,priority,comment" }
+          ]
+        },
+        "options": { "timeout": 15000 }
+      },
+      "id": "a1b2c3d4-0000-0000-0000-000000000003",
+      "name": "Fetch Jira Issue",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract plain text from Atlassian Document Format (ADF) or plain string\nfunction extractText(node) {\n  if (!node) return '';\n  if (typeof node === 'string') return node;\n  if (node.type === 'text') return node.text || '';\n  if (Array.isArray(node.content)) return node.content.map(extractText).join('\\n');\n  return '';\n}\n\nconst issue    = $input.first().json;\nconst prev     = $('Validate & Prepare').first().json;\nconst summary  = issue.fields.summary || '';\nconst descText = extractText(issue.fields.description).trim() || 'No description provided.';\n\nconst prompt = [\n  'You are a senior Java Spring Boot developer.',\n  '',\n  `Task: ${summary}`,\n  '',\n  `Description:\\n${descText}`,\n  '',\n  'Requirements:',\n  '- Use Spring Boot 3.x with clean architecture (Controller → Service → Repository).',\n  '- Apply input validation (Jakarta Validation / @Valid).',\n  '- Include proper error handling (GlobalExceptionHandler).',\n  '- Add Javadoc or inline comments where necessary.',\n  '- Write JUnit 5 unit tests with Mockito for the service layer.',\n  '',\n  'Return ONLY a valid JSON object — no markdown, no code fences — with this exact shape:',\n  '{',\n  '  \"summary\": \"<one-sentence description of what was implemented>\",',\n  '  \"files\": [',\n  '    { \"name\": \"<relative/path/FileName.java>\", \"content\": \"<full file content>\" }',\n  '  ],',\n  '  \"patch\": \"<unified diff of all generated files (git diff format), or empty string>\"',\n  '}',\n].join('\\n');\n\nreturn [{\n  json: {\n    ...prev,\n    issueKey: issue.key,\n    summary,\n    descText,\n    prompt,\n  },\n}];"
+      },
+      "id": "a1b2c3d4-0000-0000-0000-000000000004",
+      "name": "Build AI Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Route to the correct AI provider using the global fetch() available in n8n v1+\nconst { provider, model, openaiKey, claudeKey, geminiKey, prompt } = $json;\nconst SYSTEM = 'You are a senior Java Spring Boot developer. Return only valid JSON — no markdown, no explanation.';\n\nlet content;\n\nif (provider === 'claude') {\n  const res = await fetch('https://api.anthropic.com/v1/messages', {\n    method: 'POST',\n    headers: { 'x-api-key': claudeKey, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },\n    body: JSON.stringify({ model: model || 'claude-3-5-sonnet-20241022', max_tokens: 8192, system: SYSTEM, messages: [{ role: 'user', content: prompt }] }),\n  });\n  if (!res.ok) throw new Error(`Claude API error ${res.status}: ${await res.text()}`);\n  const data = await res.json();\n  content = data.content[0].text;\n\n} else if (provider === 'gemini') {\n  const mdl = model || 'gemini-1.5-pro';\n  const res = await fetch(\n    `https://generativelanguage.googleapis.com/v1beta/models/${mdl}:generateContent?key=${geminiKey}`,\n    {\n      method: 'POST',\n      headers: { 'Content-Type': 'application/json' },\n      body: JSON.stringify({ contents: [{ parts: [{ text: `${SYSTEM}\\n\\n${prompt}` }] }], generationConfig: { temperature: 0.2, maxOutputTokens: 8192 } }),\n    }\n  );\n  if (!res.ok) throw new Error(`Gemini API error ${res.status}: ${await res.text()}`);\n  const data = await res.json();\n  content = data.candidates[0].content.parts[0].text;\n\n} else {\n  // Default: OpenAI\n  const res = await fetch('https://api.openai.com/v1/chat/completions', {\n    method: 'POST',\n    headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },\n    body: JSON.stringify({ model: model || 'gpt-4o', temperature: 0.2, max_tokens: 8192, messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: prompt }] }),\n  });\n  if (!res.ok) throw new Error(`OpenAI API error ${res.status}: ${await res.text()}`);\n  const data = await res.json();\n  content = data.choices[0].message.content;\n}\n\nreturn [{ json: { ...$json, aiContent: content } }];"
+      },
+      "id": "a1b2c3d4-0000-0000-0000-000000000005",
+      "name": "Call AI Provider",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { aiContent } = $input.first().json;\nconst rawContent = aiContent ?? '';\n\n// Strip accidental markdown code fences\nconst cleaned = rawContent\n  .replace(/^```json\\s*/i, '')\n  .replace(/^```\\s*/i, '')\n  .replace(/\\s*```$/, '')\n  .trim();\n\nlet parsed;\ntry {\n  parsed = JSON.parse(cleaned);\n} catch {\n  throw new Error('AI did not return valid JSON. Raw: ' + cleaned.slice(0, 300));\n}\n\nif (!parsed.summary) parsed.summary = 'Code generated successfully.';\nif (!Array.isArray(parsed.files)) parsed.files = [];\nif (typeof parsed.patch !== 'string') parsed.patch = '';\n\nreturn [{ json: parsed }];"
+      },
+      "id": "a1b2c3d4-0000-0000-0000-000000000006",
+      "name": "Parse AI Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              { "name": "Content-Type", "value": "application/json" },
+              { "name": "Access-Control-Allow-Origin", "value": "*" }
+            ]
+          }
+        }
+      },
+      "id": "a1b2c3d4-0000-0000-0000-000000000007",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Error handler — return a structured error response instead of crashing\nconst err = $input.first().json;\nreturn [{\n  json: {\n    error: true,\n    message: err.message || 'Unknown error',\n  },\n}];"
+      },
+      "id": "a1b2c3d4-0000-0000-0000-000000000008",
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 500]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 500,
+          "responseHeaders": {
+            "entries": [
+              { "name": "Content-Type", "value": "application/json" }
+            ]
+          }
+        }
+      },
+      "id": "a1b2c3d4-0000-0000-0000-000000000009",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1120, 500]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [{ "node": "Validate & Prepare", "type": "main", "index": 0 }]
+      ]
+    },
+    "Validate & Prepare": {
+      "main": [
+        [{ "node": "Fetch Jira Issue", "type": "main", "index": 0 }]
+      ]
+    },
+    "Fetch Jira Issue": {
+      "main": [
+        [{ "node": "Build AI Prompt", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build AI Prompt": {
+      "main": [
+        [{ "node": "Call AI Provider", "type": "main", "index": 0 }]
+      ]
+    },
+    "Call AI Provider": {
+      "main": [
+        [{ "node": "Parse AI Response", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse AI Response": {
+      "main": [
+        [{ "node": "Respond to Webhook", "type": "main", "index": 0 }]
+      ]
+    },
+    "Error Handler": {
+      "main": [
+        [{ "node": "Respond Error", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": [],
+  "active": false
+}
