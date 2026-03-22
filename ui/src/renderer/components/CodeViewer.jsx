@@ -9,21 +9,56 @@ import 'prismjs/components/prism-diff';
 import 'prismjs/components/prism-yaml';
 import 'prismjs/components/prism-sql';
 import 'prismjs/components/prism-json';
+import 'prismjs/components/prism-python';
+import 'prismjs/components/prism-go';
+import 'prismjs/components/prism-rust';
+import 'prismjs/components/prism-csharp';
+import 'prismjs/components/prism-php';
+import 'prismjs/components/prism-ruby';
+import 'prismjs/components/prism-kotlin';
+import 'prismjs/components/prism-swift';
+import 'prismjs/components/prism-c';
+import 'prismjs/components/prism-cpp';
 
 const EXT_LANG_MAP = {
+  // JVM
   java: 'java',
-  js: 'javascript',
-  jsx: 'javascript',
-  ts: 'typescript',
-  tsx: 'typescript',
-  xml: 'xml',
-  sh: 'bash',
+  kt:   'kotlin',
+  kts:  'kotlin',
+  // JS ecosystem
+  js:   'javascript',
+  jsx:  'javascript',
+  ts:   'typescript',
+  tsx:  'typescript',
+  // Python
+  py:   'python',
+  // Go
+  go:   'go',
+  // Rust
+  rs:   'rust',
+  // C# / .NET
+  cs:   'csharp',
+  // PHP
+  php:  'php',
+  // Ruby
+  rb:   'ruby',
+  // Swift
+  swift:'swift',
+  // C / C++
+  c:    'c',
+  cpp:  'cpp',
+  cc:   'cpp',
+  h:    'c',
+  hpp:  'cpp',
+  // Web / config
+  xml:  'xml',
+  sh:   'bash',
   bash: 'bash',
   diff: 'diff',
-  patch: 'diff',
-  yml: 'yaml',
+  patch:'diff',
+  yml:  'yaml',
   yaml: 'yaml',
-  sql: 'sql',
+  sql:  'sql',
   json: 'json',
 };
 

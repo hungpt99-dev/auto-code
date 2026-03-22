@@ -1,10 +1,25 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { fetchIssueDetail } from '../store/issuesSlice';
 import { startGeneration, resetGeneration } from '../store/aiSlice';
 import { GENERATION_STEPS, PROVIDER_MAP } from '../constants/aiProviders';
 import Loader from './Loader';
+
+const LANGUAGES = [
+  { value: 'javascript', label: 'JavaScript / Node.js',  ext: 'js'  },
+  { value: 'typescript', label: 'TypeScript',             ext: 'ts'  },
+  { value: 'python',     label: 'Python',                 ext: 'py'  },
+  { value: 'java',       label: 'Java / Spring Boot',     ext: 'java'},
+  { value: 'csharp',     label: 'C# / .NET',              ext: 'cs'  },
+  { value: 'go',         label: 'Go',                     ext: 'go'  },
+  { value: 'rust',       label: 'Rust',                   ext: 'rs'  },
+  { value: 'php',        label: 'PHP',                    ext: 'php' },
+  { value: 'ruby',       label: 'Ruby',                   ext: 'rb'  },
+  { value: 'kotlin',     label: 'Kotlin',                 ext: 'kt'  },
+  { value: 'swift',      label: 'Swift',                  ext: 'swift'},
+  { value: 'cpp',        label: 'C / C++',                ext: 'cpp' },
+];
 
 /**
  * Recursively extracts plain text from Atlassian Document Format (ADF) or
@@ -49,6 +64,8 @@ export default function TaskDetail() {
   const settings = useSelector((s) => s.settings);
   const { generating, completedSteps, genError } = useSelector((s) => s.ai);
 
+  const [language, setLanguage] = useState('javascript');
+
   useEffect(() => {
     dispatch(
       fetchIssueDetail({
@@ -62,7 +79,7 @@ export default function TaskDetail() {
 
   async function handleGenerate() {
     dispatch(resetGeneration());
-    const result = await dispatch(startGeneration({ issueKey: key, settings }));
+    const result = await dispatch(startGeneration({ issueKey: key, settings, language }));
     if (startGeneration.fulfilled.match(result)) {
       navigate(`/issue/${key}/result`);
     }
@@ -152,6 +169,24 @@ export default function TaskDetail() {
 
       <div className="generate-section">
         {/* Provider badge */}
+        {/* Language selector */}
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: 'var(--text-muted)' }}>
+            Programming Language
+          </label>
+          <select
+            className="input"
+            value={language}
+            onChange={(e) => setLanguage(e.target.value)}
+            disabled={generating}
+            style={{ maxWidth: 280 }}
+          >
+            {LANGUAGES.map((l) => (
+              <option key={l.value} value={l.value}>{l.label}</option>
+            ))}
+          </select>
+        </div>
+
         {settings.aiProvider && (
           <div style={{ marginBottom: 10, fontSize: 13, color: 'var(--text-muted)' }}>
             Using {PROVIDER_MAP[settings.aiProvider]?.icon}{' '}

@@ -7,7 +7,7 @@ import { setGenerationResult } from './issuesSlice';
 
 export const startGeneration = createAsyncThunk(
   'ai/startGeneration',
-  async ({ issueKey, settings }, { dispatch, rejectWithValue }) => {
+  async ({ issueKey, settings, language = 'javascript' }, { dispatch, rejectWithValue }) => {
     // Simulate step-by-step progress while the real n8n call is in-flight.
     // Each timer fires at the cumulative delay defined in STEP_TIMINGS_MS.
     const timers = STEP_TIMINGS_MS.slice(0, GENERATION_STEPS.length - 1).map((delay, idx) =>
@@ -30,6 +30,7 @@ export const startGeneration = createAsyncThunk(
           openaiKey:  settings.openaiKey   || '',
           claudeKey:  settings.claudeKey   || '',
           geminiKey:  settings.geminiKey   || '',
+          language,
         },
         { timeout: 180_000, headers: { 'Content-Type': 'application/json' } }
       );
