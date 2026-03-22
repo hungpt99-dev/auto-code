@@ -5,21 +5,35 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
+// ─── Step types ───────────────────────────────────────────────────────────────
+// These map 1-to-1 with n8n execution nodes in execute-workflow.workflow.json
+export const STEP_TYPES = [
+  { id: 'AI_ANALYZE',   label: 'AI Analyze',    icon: '🔍', color: '#6366f1', description: 'Send requirements to AI for analysis' },
+  { id: 'AI_GENERATE',  label: 'AI Generate',   icon: '⚡', color: '#8b5cf6', description: 'Generate code or content with AI' },
+  { id: 'APPLY_PATCH',  label: 'Apply Patch',   icon: '📋', color: '#f59e0b', description: 'Apply generated patch to the repo' },
+  { id: 'GIT_COMMIT',   label: 'Git Commit',    icon: '💾', color: '#10b981', description: 'Commit changes to the local repository' },
+  { id: 'GIT_STATUS',   label: 'Git Status',    icon: '📊', color: '#06b6d4', description: 'Check git status of the repository' },
+  { id: 'FETCH_JIRA',   label: 'Fetch Jira',    icon: '🎫', color: '#0ea5e9', description: 'Fetch issue details from Jira' },
+  { id: 'CUSTOM',       label: 'Custom HTTP',   icon: '🌐', color: '#ec4899', description: 'Call a custom HTTP endpoint' },
+];
+
+export const STEP_TYPE_MAP = Object.fromEntries(STEP_TYPES.map((t) => [t.id, t]));
+
 // ─── Default workflows ────────────────────────────────────────────────────────
 const DEFAULT_WORKFLOWS = [
   {
     id: 'wf-code',
     taskType: 'code',
-    name: 'Code Generation',
+    name: 'Feature Implementation',
     description: 'Full feature implementation from a Jira issue',
     active: true,
     webhookUrl: '',
     steps: [
-      { id: 'wf-code-s1', order: 0, label: 'Fetch Jira details',    prompt: 'Fetch the complete Jira issue including acceptance criteria, description, and linked issues.', editable: false },
-      { id: 'wf-code-s2', order: 1, label: 'Analyze requirements', prompt: 'Analyze the requirements and identify affected files, modules, and components in the repository.', editable: true },
-      { id: 'wf-code-s3', order: 2, label: 'Plan architecture',    prompt: 'Plan the implementation: list files to create/modify, define function signatures, and identify dependencies.', editable: true },
-      { id: 'wf-code-s4', order: 3, label: 'Generate code',        prompt: 'Generate clean, production-ready code following SOLID principles and the project coding style.', editable: true },
-      { id: 'wf-code-s5', order: 4, label: 'Write tests',          prompt: 'Write comprehensive unit and integration tests with edge cases and mocks.', editable: true },
+      { id: 'wf-code-s1', order: 0, type: 'FETCH_JIRA',  label: 'Fetch Jira details',    config: {}, editable: false },
+      { id: 'wf-code-s2', order: 1, type: 'AI_ANALYZE',  label: 'Analyze requirements',  config: { promptTemplate: 'Analyze the requirements and identify affected files, modules, and components.' }, editable: true },
+      { id: 'wf-code-s3', order: 2, type: 'AI_GENERATE', label: 'Generate code',          config: { promptTemplate: 'Generate clean, production-ready code following SOLID principles.', maxTokens: 8192 }, editable: true },
+      { id: 'wf-code-s4', order: 3, type: 'APPLY_PATCH', label: 'Apply patch',            config: {}, editable: true },
+      { id: 'wf-code-s5', order: 4, type: 'GIT_COMMIT',  label: 'Commit changes',         config: { message: 'feat: {{issueKey}} - {{summary}}' }, editable: true },
     ],
   },
   {
@@ -30,10 +44,10 @@ const DEFAULT_WORKFLOWS = [
     active: true,
     webhookUrl: '',
     steps: [
-      { id: 'wf-bug-s1', order: 0, label: 'Reproduce issue',   prompt: 'Analyze the bug description and identify reproduction steps and environment.', editable: false },
-      { id: 'wf-bug-s2', order: 1, label: 'Trace root cause',  prompt: 'Scan the codebase to find root cause. Look at stack traces, error logs, and affected components.', editable: true },
-      { id: 'wf-bug-s3', order: 2, label: 'Generate fix',      prompt: 'Generate a minimal, targeted fix that resolves the root cause without side effects.', editable: true },
-      { id: 'wf-bug-s4', order: 3, label: 'Regression tests',  prompt: 'Write regression tests to prevent this bug from recurring.', editable: true },
+      { id: 'wf-bug-s1', order: 0, type: 'FETCH_JIRA',  label: 'Fetch issue',      config: {}, editable: false },
+      { id: 'wf-bug-s2', order: 1, type: 'AI_ANALYZE',  label: 'Trace root cause', config: { promptTemplate: 'Analyze the bug and trace its root cause using the codebase context.' }, editable: true },
+      { id: 'wf-bug-s3', order: 2, type: 'AI_GENERATE', label: 'Generate fix',     config: { promptTemplate: 'Generate a minimal, targeted fix that resolves the root cause.', maxTokens: 4096 }, editable: true },
+      { id: 'wf-bug-s4', order: 3, type: 'APPLY_PATCH', label: 'Apply fix',        config: {}, editable: true },
     ],
   },
   {
@@ -44,10 +58,9 @@ const DEFAULT_WORKFLOWS = [
     active: true,
     webhookUrl: '',
     steps: [
-      { id: 'wf-review-s1', order: 0, label: 'Fetch context',     prompt: 'Fetch the code changes and related Jira issue context.', editable: false },
-      { id: 'wf-review-s2', order: 1, label: 'Security audit',    prompt: 'Audit for OWASP Top 10 vulnerabilities, injection risks, and authentication issues.', editable: true },
-      { id: 'wf-review-s3', order: 2, label: 'Code quality',      prompt: 'Review for SOLID principles, code smells, cyclomatic complexity, and maintainability.', editable: true },
-      { id: 'wf-review-s4', order: 3, label: 'Performance',       prompt: 'Identify N+1 queries, memory leaks, inefficient algorithms, and bottlenecks.', editable: true },
+      { id: 'wf-review-s1', order: 0, type: 'FETCH_JIRA',  label: 'Fetch context',  config: {}, editable: false },
+      { id: 'wf-review-s2', order: 1, type: 'AI_ANALYZE',  label: 'Security audit', config: { promptTemplate: 'Audit for OWASP Top 10 vulnerabilities, injection risks, and authentication issues.' }, editable: true },
+      { id: 'wf-review-s3', order: 2, type: 'AI_GENERATE', label: 'Review report',  config: { promptTemplate: 'Generate a comprehensive code review report with findings and recommendations.', maxTokens: 4096 }, editable: true },
     ],
   },
   {
@@ -58,10 +71,10 @@ const DEFAULT_WORKFLOWS = [
     active: true,
     webhookUrl: '',
     steps: [
-      { id: 'wf-test-s1', order: 0, label: 'Analyze coverage gaps', prompt: 'Analyze the current test coverage and identify gaps.', editable: false },
-      { id: 'wf-test-s2', order: 1, label: 'Unit tests',            prompt: 'Generate comprehensive unit tests for all public functions and classes.', editable: true },
-      { id: 'wf-test-s3', order: 2, label: 'Integration tests',     prompt: 'Generate integration tests covering API endpoints, database interactions, and service boundaries.', editable: true },
-      { id: 'wf-test-s4', order: 3, label: 'Edge cases',            prompt: 'Add tests for boundary conditions, null inputs, large payloads, and error paths.', editable: true },
+      { id: 'wf-test-s1', order: 0, type: 'FETCH_JIRA',  label: 'Fetch issue',        config: {}, editable: false },
+      { id: 'wf-test-s2', order: 1, type: 'AI_ANALYZE',  label: 'Analyze gaps',       config: { promptTemplate: 'Analyze the current test coverage and identify gaps.' }, editable: true },
+      { id: 'wf-test-s3', order: 2, type: 'AI_GENERATE', label: 'Generate tests',     config: { promptTemplate: 'Generate comprehensive unit and integration tests.', maxTokens: 8192 }, editable: true },
+      { id: 'wf-test-s4', order: 3, type: 'APPLY_PATCH', label: 'Apply test files',   config: {}, editable: true },
     ],
   },
 ];
@@ -200,6 +213,100 @@ export const useAppStore = create(
       /** Clear the work folder (user clicked × or selected a new one). */
       clearWorkFolder: () =>
         set(() => ({ workFolder: { path: null, repos: [] } })),
+
+      // ── Job Tracking ─────────────────────────────────────────────────────────
+      // jobs is a map: { [jobId]: JobState }
+      // JobState: { jobId, issueKey, workflowId, status, steps: { [stepId]: StepState }, createdAt, error }
+      // StepState: { stepId, status: 'pending'|'running'|'done'|'failed', message, startedAt, endedAt }
+      jobs: {},
+
+      /**
+       * Create a new job entry when workflow execution starts.
+       * @param {string} jobId
+       * @param {string} issueKey
+       * @param {string} workflowId
+       * @param {Array<{id: string}>} steps
+       */
+      createJob: (jobId, issueKey, workflowId, steps) =>
+        set((s) => ({
+          jobs: {
+            ...s.jobs,
+            [jobId]: {
+              jobId,
+              issueKey,
+              workflowId,
+              status: 'PENDING',
+              steps: Object.fromEntries(
+                steps.map((st) => [st.id, { stepId: st.id, status: 'pending', message: '', startedAt: null, endedAt: null }])
+              ),
+              createdAt: new Date().toISOString(),
+              error: null,
+            },
+          },
+        })),
+
+      /**
+       * Upsert a step status update for a running job. Called when n8n POSTs a callback.
+       * @param {string} jobId
+       * @param {string} stepId
+       * @param {'pending'|'running'|'done'|'failed'} status
+       * @param {string} [message]
+       */
+      updateJobStep: (jobId, stepId, status, message = '') =>
+        set((s) => {
+          const job = s.jobs[jobId];
+          if (!job) return {};
+          const now = new Date().toISOString();
+          const prevStep = job.steps[stepId] || {};
+          return {
+            jobs: {
+              ...s.jobs,
+              [jobId]: {
+                ...job,
+                status: status === 'failed' ? 'FAILED' : 'PROCESSING',
+                steps: {
+                  ...job.steps,
+                  [stepId]: {
+                    ...prevStep,
+                    stepId,
+                    status,
+                    message,
+                    startedAt: status === 'running' ? now : (prevStep.startedAt ?? null),
+                    endedAt:   (status === 'done' || status === 'failed') ? now : (prevStep.endedAt ?? null),
+                  },
+                },
+              },
+            },
+          };
+        }),
+
+      /**
+       * Mark a job as fully completed (DONE or FAILED).
+       * @param {string} jobId
+       * @param {'DONE'|'FAILED'} status
+       * @param {string} [error]
+       */
+      completeJob: (jobId, status, error = '') =>
+        set((s) => {
+          const job = s.jobs[jobId];
+          if (!job) return {};
+          return {
+            jobs: {
+              ...s.jobs,
+              [jobId]: { ...job, status, error: error || null, completedAt: new Date().toISOString() },
+            },
+          };
+        }),
+
+      /** Remove jobs older than 24 hours to prevent unbounded storage growth. */
+      pruneOldJobs: () =>
+        set((s) => {
+          const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+          const pruned = Object.fromEntries(
+            Object.entries(s.jobs).filter(([, job]) => new Date(job.createdAt).getTime() > cutoff)
+          );
+          return { jobs: pruned };
+        }),
     }),
     {
       name: 'auto-code-app-store',
@@ -208,6 +315,7 @@ export const useAppStore = create(
         history:        state.history,
         dashboardStats: state.dashboardStats,
         workFolder:     state.workFolder,
+        jobs:           state.jobs,
       }),
     }
   )

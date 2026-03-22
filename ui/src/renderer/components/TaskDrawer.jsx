@@ -4,6 +4,8 @@ import { startGeneration, resetGeneration } from '../store/aiSlice';
 import { TASK_TYPES, LANG_AWARE_TASK_TYPES } from '../constants/taskTypes';
 import { GENERATION_STEPS, PROVIDER_MAP } from '../constants/aiProviders';
 import { useAppStore } from '../store/appStore';
+import { JobTracker } from './JobTracker';
+import { executeWorkflow } from '../services/workflowExecution.service';
 
 // ─── Language list ────────────────────────────────────────────────────────────
 const LANGUAGES = [
@@ -83,6 +85,12 @@ export default function TaskDrawer({ issue, settings, onClose, onResult }) {
   const [applyTargetRepo, setApplyTargetRepo] = useState('');
   const [applyingPatch,   setApplyingPatch]   = useState(false);
   const [applyResult,     setApplyResult]     = useState(null);
+
+  // Workflow execution state
+  const [activeJobId,      setActiveJobId]      = useState(null);
+  const [activeWorkflowDef, setActiveWorkflowDef] = useState(null);
+  const [workflowError,    setWorkflowError]    = useState(null);
+  const [executingWorkflow, setExecutingWorkflow] = useState(false);
 
   // Track generation start time for duration recording
   const genStartRef = useRef(null);
@@ -271,9 +279,34 @@ export default function TaskDrawer({ issue, settings, onClose, onResult }) {
     }
   }, [allRepos.length, selectedRepos]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Execute workflow via n8n ─────────────────────────────────────────────
+  const { workflows } = useAppStore();
+
+  async function handleExecuteWorkflow(workflowDef) {
+    setWorkflowError(null);
+    setExecutingWorkflow(true);
+    setActiveWorkflowDef(workflowDef);
+    setActiveTab('workflow');
+
+    const result = await executeWorkflow({
+      issueKey: fullIssue.key,
+      workflowDef,
+      repo: allRepos.find((r) => selectedRepos.includes(r.path)) || null,
+      settings,
+    });
+
+    setExecutingWorkflow(false);
+    if (result.success) {
+      setActiveJobId(result.jobId);
+    } else {
+      setWorkflowError(result.error || 'Failed to start workflow');
+    }
+  }
+
   const TABS = [
     { id: 'overview',  label: 'Overview' },
     { id: 'generate',  label: 'Generate' },
+    { id: 'workflow',  label: '▶ Workflow' },
     { id: 'files',     label: `Files${files.length ? ` (${files.length})` : ''}` },
     { id: 'patch',     label: 'Patch' },
   ];
@@ -629,6 +662,61 @@ export default function TaskDrawer({ issue, settings, onClose, onResult }) {
                     <div className="drawer-no-result">No patch generated for this output.</div>
                   )}
                 </>
+              )}
+            </div>
+          )}
+
+          {/* ── WORKFLOW tab ── */}
+          {activeTab === 'workflow' && (
+            <div className="drawer-workflow-tab">
+              <SectionLabel>Execute n8n Workflow</SectionLabel>
+
+              {/* Workflow selector */}
+              <div className="wf-exec-list">
+                {workflows.length === 0 ? (
+                  <p className="patch-apply-hint">No workflows configured. Go to the Workflows tab to create one.</p>
+                ) : (
+                  workflows.filter((w) => w.active).map((wf) => (
+                    <div key={wf.id} className="wf-exec-item">
+                      <div className="wf-exec-item-info">
+                        <div className="wf-exec-item-name">{wf.name}</div>
+                        <div className="wf-exec-item-meta">{wf.steps.length} steps · {wf.taskType}</div>
+                        <div className="wf-exec-item-steps">
+                          {wf.steps.slice(0, 5).map((s) => (
+                            <span key={s.id} className="wf-exec-step-chip">{s.label}</span>
+                          ))}
+                          {wf.steps.length > 5 && <span className="wf-exec-step-chip">+{wf.steps.length - 5}</span>}
+                        </div>
+                      </div>
+                      <button
+                        className="btn btn-primary btn-sm"
+                        disabled={executingWorkflow}
+                        onClick={() => handleExecuteWorkflow(wf)}
+                      >
+                        {executingWorkflow && activeWorkflowDef?.id === wf.id ? '⏳ Starting…' : '▶ Run'}
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {workflowError && (
+                <div className="alert alert-error" style={{ marginTop: 12 }}>{workflowError}</div>
+              )}
+
+              {/* Job tracker — shows real-time n8n step progress */}
+              {activeJobId && activeWorkflowDef && (
+                <div style={{ marginTop: 20 }}>
+                  <SectionLabel>Execution Progress</SectionLabel>
+                  <JobTracker jobId={activeJobId} workflowDef={activeWorkflowDef} />
+                </div>
+              )}
+
+              {!activeJobId && !workflowError && (
+                <div style={{ marginTop: 24, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+                  <p>Select a workflow above to execute it for <strong>{fullIssue.key}</strong>.</p>
+                  <p style={{ marginTop: 4 }}>n8n will process each step and report progress in real-time.</p>
+                </div>
               )}
             </div>
           )}

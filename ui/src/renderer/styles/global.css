@@ -2301,3 +2301,360 @@ code[class*="language-"], pre[class*="language-"] {
   margin: 6px 0 0;
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   JOB TRACKER  (JobTracker.jsx + JobTrackerPanel)
+   ══════════════════════════════════════════════════════════════════════════ */
+.job-tracker {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  margin-top: 8px;
+}
+.jt-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  gap: 8px;
+}
+.jt-header-left { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.jt-status-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 12px;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+}
+.jt-status-badge--running  { background: #1e3a5f; color: #60a5fa; }
+.jt-status-badge--done     { background: #14532d; color: #4ade80; }
+.jt-status-badge--failed   { background: #450a0a; color: #f87171; }
+
+.jt-progress-bar-wrap {
+  height: 4px;
+  background: var(--bg-tertiary);
+  border-radius: 0;
+  overflow: hidden;
+}
+.jt-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), #818cf8);
+  border-radius: 0;
+  transition: width 0.4s ease;
+}
+.jt-progress-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: right;
+  padding: 4px 14px 0;
+}
+
+.jt-steps { padding: 8px 0; }
+.jt-step-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 7px 14px;
+  transition: background 0.15s;
+}
+.jt-step-row--running { background: var(--bg-hover); }
+.jt-step-row--failed  { background: rgba(239, 68, 68, 0.06); }
+
+.jt-step-type-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 4px;
+}
+.jt-step-body { flex: 1; min-width: 0; }
+.jt-step-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.jt-step-msg {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.jt-step-right { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.jt-step-elapsed { font-size: 11px; color: var(--text-muted); }
+.jt-step-status-icon { font-size: 15px; line-height: 1; }
+
+@keyframes jt-spin { to { transform: rotate(360deg); } }
+.jt-spinner { display: inline-block; animation: jt-spin 1s linear infinite; }
+
+.jt-error-box {
+  margin: 8px 14px;
+  padding: 8px 12px;
+  background: rgba(239,68,68,0.1);
+  border: 1px solid rgba(239,68,68,0.3);
+  border-radius: 6px;
+  font-size: 12px;
+  color: #f87171;
+}
+
+/* Job Tracker Panel (all-jobs list) */
+.jt-panel { padding: 8px 0; }
+.jt-panel-empty { padding: 16px; text-align: center; color: var(--text-muted); font-size: 13px; }
+.jt-panel-item {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: default;
+  transition: background 0.15s;
+}
+.jt-panel-item:hover { background: var(--bg-hover); }
+.jt-panel-item-left { flex: 1; min-width: 0; }
+.jt-panel-item-key  { font-size: 12px; font-weight: 700; color: var(--accent); margin-bottom: 3px; }
+.jt-panel-item-wf   { font-size: 11.5px; color: var(--text-secondary); margin-bottom: 4px; }
+.jt-panel-item-steps { display: flex; flex-wrap: wrap; gap: 4px; }
+.jt-mini-step {
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  border: 1px solid transparent;
+}
+.jt-mini-step--done    { color: #4ade80; border-color: #4ade80; }
+.jt-mini-step--running { color: #60a5fa; border-color: #60a5fa; animation: jt-pulse 1.2s ease-in-out infinite; }
+.jt-mini-step--failed  { color: #f87171; border-color: #f87171; }
+@keyframes jt-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   JOB PANEL  (slide-in from right, KanbanBoard)
+   ══════════════════════════════════════════════════════════════════════════ */
+.job-panel-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  z-index: 490;
+  cursor: pointer;
+}
+.job-panel-slide {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 360px;
+  max-width: 90vw;
+  background: var(--bg-primary);
+  border-left: 1px solid var(--border);
+  z-index: 500;
+  display: flex;
+  flex-direction: column;
+  box-shadow: -4px 0 24px rgba(0,0,0,0.35);
+  animation: slide-in-right 0.22s ease;
+}
+@keyframes slide-in-right {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0);    }
+}
+.job-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+  flex-shrink: 0;
+}
+.job-panel-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+  transition: color 0.15s;
+}
+.job-panel-close:hover { color: var(--text-primary); }
+.job-panel-body { flex: 1; overflow-y: auto; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   KANBAN CARD  job overlays
+   ══════════════════════════════════════════════════════════════════════════ */
+.kcard--working { border-color: #3b82f6 !important; }
+.kcard--failed  { border-color: #ef4444 !important; }
+.kcard--done-wf { border-color: #22c55e !important; }
+
+.kcard-working-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 6px;
+  background: rgba(59,130,246,0.1);
+  border-top: 1px solid rgba(59,130,246,0.3);
+}
+.kcard-working-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(96,165,250,0.3);
+  border-top-color: #60a5fa;
+  border-radius: 50%;
+  animation: jt-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+.kcard-working-label {
+  font-size: 11px;
+  color: #93c5fd;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kcard-failed-bar {
+  padding: 4px 10px 6px;
+  background: rgba(239,68,68,0.1);
+  border-top: 1px solid rgba(239,68,68,0.3);
+  font-size: 11px;
+  color: #fca5a5;
+}
+.kcard-wf-done-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #4ade80;
+  background: rgba(34,197,94,0.12);
+  border: 1px solid rgba(34,197,94,0.3);
+  border-radius: 4px;
+  padding: 2px 7px;
+  margin: 0 0 4px 0;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   WORKFLOW STEP EDITOR  (WorkflowsTab — new typed-step styles)
+   ══════════════════════════════════════════════════════════════════════════ */
+.wf-step-type-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.wf-step-type-chip {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+.wf-step-drag-handle {
+  cursor: grab;
+  font-size: 14px;
+  color: var(--text-muted);
+  padding: 0 2px;
+  user-select: none;
+  transition: color 0.15s;
+}
+.wf-step-drag-handle:active { cursor: grabbing; }
+.wf-step-card--dragging {
+  opacity: 0.4;
+  transform: scale(0.98);
+}
+.wf-step-config {
+  border-top: 1px solid var(--border);
+  padding: 12px 14px;
+  background: var(--bg-primary);
+}
+.wf-step-config-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+.wf-step-config-row:last-child { margin-bottom: 0; }
+.wf-step-config-row label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.wf-step-config-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.wf-config-note {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 4px 0;
+}
+
+/* Step type legend */
+.wf-step-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-primary);
+}
+.wf-legend-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   TASK DRAWER — Workflow execution tab
+   ══════════════════════════════════════════════════════════════════════════ */
+.drawer-workflow-tab { padding: 14px 0; }
+.wf-exec-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+.wf-exec-item {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.wf-exec-item-info { flex: 1; min-width: 0; }
+.wf-exec-item-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+.wf-exec-step-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.wf-exec-step-chip {
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+

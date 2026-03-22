@@ -1,0 +1,142 @@
+{
+  "name": "Auto Code — Execute Workflow (Step Engine)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "execute-workflow",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "ew-node-001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "execute-workflow-webhook-id"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate and unpack incoming payload\nconst body = $input.first().json.body || $input.first().json;\n\nif (!body.jobId)       throw new Error('jobId is required');\nif (!body.issueKey)    throw new Error('issueKey is required');\nif (!body.workflow)    throw new Error('workflow definition is required');\nif (!body.callbackUrl) throw new Error('callbackUrl is required');\n\nconst { jobId, issueKey, workflow, repo, settings, callbackUrl } = body;\n\nreturn [{\n  json: {\n    jobId,\n    issueKey,\n    workflow,\n    repo: repo || {},\n    settings: settings || {},\n    callbackUrl,\n    stepResults: {},\n  },\n}];"
+      },
+      "id": "ew-node-002",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Helper: POST a step-level status update back to the local callback server\nasync function postCallback(callbackUrl, jobId, stepId, status, message) {\n  try {\n    await fetch(callbackUrl, {\n      method: 'POST',\n      headers: { 'Content-Type': 'application/json' },\n      body: JSON.stringify({ jobId, stepId, status, message }),\n    });\n  } catch (e) {\n    console.error('[auto-code] Callback failed:', e.message);\n  }\n}\n\nconst { jobId, issueKey, workflow, repo, settings, callbackUrl } = $json;\nconst steps = Array.isArray(workflow.steps) ? workflow.steps : [];\nconst basicAuth = settings.jiraEmail && settings.jiraToken\n  ? 'Basic ' + Buffer.from(settings.jiraEmail + ':' + settings.jiraToken).toString('base64')\n  : '';\n\nconst SYSTEM_PROMPT = `You are a senior software engineer. Return only valid JSON — no markdown, no explanation.`;\n\n// Accumulated context carried between steps\nconst context = {\n  issueKey,\n  repo,\n  settings,\n  jiraSummary: '',\n  jiraDescription: '',\n  analysisResult: '',\n  generatedCode: null,  // { summary, files, patch }\n};\n\n// ── Step executor ───────────────────────────────────────────────────────────\nasync function executeStep(step, ctx) {\n  const type   = step.type || 'CUSTOM';\n  const config = step.config || {};\n\n  switch (type) {\n\n    // ── FETCH_JIRA — load issue from Jira API ──────────────────────────────\n    case 'FETCH_JIRA': {\n      if (!settings.jiraUrl || !basicAuth) {\n        return { ok: false, message: 'Jira credentials not configured' };\n      }\n      const res = await fetch(\n        `${settings.jiraUrl}/rest/api/3/issue/${issueKey}?fields=summary,description,issuetype,status,comment`,\n        { headers: { Authorization: basicAuth, Accept: 'application/json' } }\n      );\n      if (!res.ok) throw new Error(`Jira API error ${res.status}`);\n      const data = await res.json();\n      ctx.jiraSummary     = data.fields?.summary || '';\n      ctx.jiraDescription = JSON.stringify(data.fields?.description || '');\n      return { ok: true, message: `Fetched: ${ctx.jiraSummary}` };\n    }\n\n    // ── AI_ANALYZE — analyze issue / codebase ──────────────────────────────\n    case 'AI_ANALYZE': {\n      const prompt = [\n        config.promptTemplate || 'Analyze the following Jira issue and provide a technical analysis.',\n        '',\n        `Issue: ${ctx.jiraSummary}`,\n        `Description: ${ctx.jiraDescription.slice(0, 2000)}`,\n        '',\n        'Return JSON: { \"analysis\": \"<string>\", \"affectedFiles\": [\"<path>\"], \"approach\": \"<string>\" }',\n      ].join('\\n');\n      const aiRes = await callAI(settings, prompt, SYSTEM_PROMPT, config.maxTokens || 4096);\n      ctx.analysisResult = aiRes;\n      return { ok: true, message: 'Analysis complete' };\n    }\n\n    // ── AI_GENERATE — generate code ────────────────────────────────────────\n    case 'AI_GENERATE': {\n      const lang = settings.language || 'javascript';\n      const prompt = [\n        config.promptTemplate || `You are a senior ${lang} developer. Generate production-ready code.`,\n        '',\n        `Issue: ${ctx.jiraSummary}`,\n        `Description: ${ctx.jiraDescription.slice(0, 2000)}`,\n        ctx.analysisResult ? `Analysis:\\n${ctx.analysisResult}` : '',\n        '',\n        'Return ONLY valid JSON with keys: \"summary\" (string), \"files\" (array of {name, content}), \"patch\" (string unified diff).',\n      ].filter(Boolean).join('\\n');\n      const raw = await callAI(settings, prompt, SYSTEM_PROMPT, config.maxTokens || 8192);\n      const cleaned = raw.replace(/^```json\\s*/i, '').replace(/^```\\s*/i, '').replace(/\\s*```$/, '').trim();\n      ctx.generatedCode = JSON.parse(cleaned);\n      return { ok: true, message: `Generated ${ctx.generatedCode.files?.length || 0} file(s)` };\n    }\n\n    // ── APPLY_PATCH — call app callback to trigger patch apply ────────────\n    case 'APPLY_PATCH': {\n      if (!ctx.generatedCode?.patch) return { ok: true, message: 'No patch to apply' };\n      // Signal the app to apply the patch via the job result\n      // The app will handle the actual file application after job completes\n      return { ok: true, message: 'Patch ready for application' };\n    }\n\n    // ── GIT_STATUS — check git status ─────────────────────────────────────\n    case 'GIT_STATUS': {\n      return { ok: true, message: 'Git status check complete (handled by app)' };\n    }\n\n    // ── GIT_COMMIT — signal app to commit ────────────────────────────────\n    case 'GIT_COMMIT': {\n      const msg = (config.message || 'feat: {{issueKey}} - {{summary}}')\n        .replace('{{issueKey}}', issueKey)\n        .replace('{{summary}}', ctx.jiraSummary);\n      return { ok: true, message: `Commit message: ${msg}` };\n    }\n\n    // ── CUSTOM — fire a custom HTTP endpoint ──────────────────────────────\n    case 'CUSTOM': {\n      if (!config.url) return { ok: false, message: 'No URL configured for CUSTOM step' };\n      const method = (config.method || 'POST').toUpperCase();\n      const res = await fetch(config.url, {\n        method,\n        headers: { 'Content-Type': 'application/json' },\n        ...(method !== 'GET' ? { body: JSON.stringify({ jobId, issueKey, context: ctx }) } : {}),\n      });\n      if (!res.ok) throw new Error(`Custom endpoint returned ${res.status}`);\n      return { ok: true, message: `Custom step responded ${res.status}` };\n    }\n\n    default:\n      return { ok: false, message: `Unknown step type: ${type}` };\n  }\n}\n\n// ── AI provider router ───────────────────────────────────────────────────────\nasync function callAI(settings, userPrompt, systemPrompt, maxTokens) {\n  const { provider, model, openaiKey, claudeKey, geminiKey } = settings;\n\n  if (provider === 'claude') {\n    const res = await fetch('https://api.anthropic.com/v1/messages', {\n      method: 'POST',\n      headers: { 'x-api-key': claudeKey, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json' },\n      body: JSON.stringify({ model: model || 'claude-3-5-sonnet-20241022', max_tokens: maxTokens, system: systemPrompt, messages: [{ role: 'user', content: userPrompt }] }),\n    });\n    if (!res.ok) throw new Error(`Claude API error ${res.status}: ${await res.text()}`);\n    const data = await res.json();\n    return data.content[0].text;\n  }\n\n  if (provider === 'gemini') {\n    const mdl = model || 'gemini-1.5-pro';\n    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${mdl}:generateContent?key=${geminiKey}`, {\n      method: 'POST',\n      headers: { 'Content-Type': 'application/json' },\n      body: JSON.stringify({ contents: [{ parts: [{ text: `${systemPrompt}\\n\\n${userPrompt}` }] }], generationConfig: { temperature: 0.2, maxOutputTokens: maxTokens } }),\n    });\n    if (!res.ok) throw new Error(`Gemini API error ${res.status}: ${await res.text()}`);\n    const data = await res.json();\n    return data.candidates[0].content.parts[0].text;\n  }\n\n  // Default: OpenAI\n  const res = await fetch('https://api.openai.com/v1/chat/completions', {\n    method: 'POST',\n    headers: { 'Authorization': `Bearer ${openaiKey}`, 'Content-Type': 'application/json' },\n    body: JSON.stringify({ model: model || 'gpt-4o', temperature: 0.2, max_tokens: maxTokens, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }] }),\n  });\n  if (!res.ok) throw new Error(`OpenAI API error ${res.status}: ${await res.text()}`);\n  const data = await res.json();\n  return data.choices[0].message.content;\n}\n\n// ── Execute all steps sequentially ──────────────────────────────────────────\nconst stepResults = {};\n\nfor (const step of steps) {\n  // Notify: step is starting\n  await postCallback(callbackUrl, jobId, step.id, 'running', `Starting: ${step.label}`);\n\n  try {\n    const result = await executeStep(step, context);\n    stepResults[step.id] = { ...result, status: result.ok ? 'done' : 'failed' };\n\n    // Notify: step result\n    await postCallback(\n      callbackUrl, jobId, step.id,\n      result.ok ? 'done' : 'failed',\n      result.message || ''\n    );\n\n    if (!result.ok) {\n      // Hard stop on failure\n      await postCallback(callbackUrl, jobId, null, 'FAILED', `Step failed: ${step.label} — ${result.message}`);\n      return [{ json: { jobId, status: 'FAILED', stepResults, context } }];\n    }\n  } catch (err) {\n    stepResults[step.id] = { ok: false, status: 'failed', message: err.message };\n    await postCallback(callbackUrl, jobId, step.id, 'failed', err.message);\n    await postCallback(callbackUrl, jobId, null, 'FAILED', `Uncaught error in step ${step.label}: ${err.message}`);\n    return [{ json: { jobId, status: 'FAILED', stepResults, error: err.message, context } }];\n  }\n}\n\n// All steps done — signal completion\nawait postCallback(callbackUrl, jobId, null, 'DONE', 'All steps completed successfully');\n\nreturn [{ json: { jobId, status: 'DONE', stepResults, generatedCode: context.generatedCode } }];"
+      },
+      "id": "ew-node-003",
+      "name": "Execute Steps",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ accepted: true, jobId: $json.jobId }) }}",
+        "options": {
+          "responseCode": 202,
+          "responseHeaders": {
+            "entries": [
+              { "name": "Content-Type", "value": "application/json" },
+              { "name": "Access-Control-Allow-Origin", "value": "*" }
+            ]
+          }
+        }
+      },
+      "id": "ew-node-004",
+      "name": "Respond Accepted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [940, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const err = $input.first().json;\nreturn [{ json: { error: true, message: err.message || 'Unknown error' } }];"
+      },
+      "id": "ew-node-005",
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 480]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 500,
+          "responseHeaders": {
+            "entries": [
+              { "name": "Content-Type", "value": "application/json" }
+            ]
+          }
+        }
+      },
+      "id": "ew-node-006",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [940, 480]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [{ "node": "Validate Input", "type": "main", "index": 0 }]
+      ]
+    },
+    "Validate Input": {
+      "main": [
+        [{ "node": "Execute Steps", "type": "main", "index": 0 }]
+      ]
+    },
+    "Execute Steps": {
+      "main": [
+        [{ "node": "Respond Accepted", "type": "main", "index": 0 }]
+      ]
+    },
+    "Error Handler": {
+      "main": [
+        [{ "node": "Respond Error", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": [],
+  "active": false,
+  "_readme": {
+    "import": "Import this workflow into n8n via Settings > Import workflow. Then activate it.",
+    "webhook": "POST http://localhost:5678/webhook/execute-workflow",
+    "payload": {
+      "jobId": "job-xxx",
+      "issueKey": "PROJ-123",
+      "workflow": { "id": "wf-code", "name": "Feature Implementation", "steps": [] },
+      "repo": { "name": "my-repo", "path": "/path/to/repo", "branch": "main" },
+      "settings": {
+        "jiraUrl": "https://yourco.atlassian.net",
+        "jiraEmail": "user@example.com",
+        "jiraToken": "your-token",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "openaiKey": "sk-..."
+      },
+      "callbackUrl": "http://localhost:3847/api/job-update"
+    },
+    "flow": "1. Webhook receives job → 2. Validate → 3. Execute Steps (loops all steps, POSTs callback per step) → 4. Respond 202 immediately (async execution)"
+  }
+}

@@ -3,6 +3,7 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const http = require('http');
 const Store = require('electron-store');
 const axios = require('axios');
 const { runGit } = require('./git');
@@ -59,7 +60,10 @@ function createWindow() {
 }
 
 // ─── App lifecycle ────────────────────────────────────────────────────────────
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  createWindow();
+  localServer = startLocalServer();
+});
 
 app.on('window-all-closed', () => {
   // On macOS apps stay open until Cmd+Q; on Windows/Linux quit immediately.
@@ -524,3 +528,169 @@ ipcMain.handle('workfolder:applyPatch', async (_event, { repoPath, patchContent 
     try { fs.unlinkSync(tmpFile); } catch { /* ignore cleanup error */ }
   }
 });
+
+// ─── IPC: Workflow — execute a workflow definition via n8n ────────────────────
+// Creates a job, fires the n8n webhook, and returns the jobId immediately.
+// n8n will POST step updates back to our local HTTP callback server.
+ipcMain.handle('workflow:execute', async (_event, { jobId, issueKey, workflowDef, repo, settings }) => {
+  if (!jobId || !issueKey || !workflowDef) {
+    return { success: false, error: 'jobId, issueKey, and workflowDef are required' };
+  }
+
+  const callbackPort = localServer ? localServer.address()?.port : 3847;
+  const n8nBase = (settings?.n8nUrl || 'http://localhost:5678').replace(/\/$/, '');
+  const webhookUrl = `${n8nBase}/webhook/execute-workflow`;
+
+  try {
+    // Fire-and-forget — n8n runs async and posts callbacks; we don't await completion
+    axios.post(
+      webhookUrl,
+      {
+        jobId,
+        issueKey,
+        workflow: workflowDef,
+        repo: repo || {},
+        settings: {
+          jiraUrl:    settings?.jiraUrl || '',
+          jiraEmail:  settings?.jiraEmail || '',
+          jiraToken:  settings?.jiraToken || '',
+          provider:   settings?.aiProvider || 'openai',
+          model:      settings?.aiModel || null,
+          openaiKey:  settings?.openaiKey || '',
+          claudeKey:  settings?.claudeKey || '',
+          geminiKey:  settings?.geminiKey || '',
+        },
+        callbackUrl: `http://localhost:${callbackPort}/api/job-update`,
+      },
+      { timeout: 10000, headers: { 'Content-Type': 'application/json' } }
+    ).catch((err) => {
+      // Notify renderer that n8n trigger failed
+      sendToRenderer('job:update', {
+        jobId,
+        stepId: null,
+        status: 'FAILED',
+        message: `Failed to reach n8n: ${err.message}`,
+      });
+    });
+
+    return { success: true, jobId };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// ─── IPC: Job status — poll current job state from renderer ──────────────────
+ipcMain.handle('job:getStatus', (_event, { jobId }) => {
+  const job = jobStore.get(jobId);
+  return job || null;
+});
+
+// ─── Local HTTP server for n8n → app callbacks ───────────────────────────────
+// n8n POSTs step-level updates here during workflow execution.
+// The server is bound to localhost only — it never listens on external interfaces.
+
+// In-memory job store (authoritative source; mirrored to renderer via IPC events)
+const jobStore = new Map();
+
+/**
+ * Send an IPC event to the renderer window.
+ * Safe to call before the window is ready (events will be dropped).
+ * @param {string} channel
+ * @param {*} data
+ */
+function sendToRenderer(channel, data) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(channel, data);
+  }
+}
+
+let localServer = null;
+
+function startLocalServer() {
+  const server = http.createServer((req, res) => {
+    // CORS — allow only localhost origins
+    res.setHeader('Access-Control-Allow-Origin', 'http://localhost');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
+    const url = new URL(req.url, 'http://localhost');
+
+    // ── POST /api/job-update ─ n8n sends step progress here ─────────────────
+    if (req.method === 'POST' && url.pathname === '/api/job-update') {
+      let body = '';
+      req.on('data', (chunk) => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const update = JSON.parse(body);
+          const { jobId, stepId, status, message } = update;
+
+          if (!jobId || !status) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'jobId and status are required' }));
+            return;
+          }
+
+          // Upsert in-memory store
+          const job = jobStore.get(jobId) || { jobId, status: 'PROCESSING', steps: {}, createdAt: new Date().toISOString() };
+          if (stepId) {
+            const now = new Date().toISOString();
+            const prev = job.steps[stepId] || {};
+            job.steps[stepId] = {
+              stepId,
+              status,
+              message: message || '',
+              startedAt: status === 'running' ? now : (prev.startedAt || null),
+              endedAt:   (status === 'done' || status === 'failed') ? now : (prev.endedAt || null),
+            };
+          }
+          if (status === 'DONE')   { job.status = 'DONE';   job.completedAt = new Date().toISOString(); }
+          if (status === 'FAILED') { job.status = 'FAILED'; job.error = message || ''; job.completedAt = new Date().toISOString(); }
+          jobStore.set(jobId, job);
+
+          // Forward update to renderer via IPC
+          sendToRenderer('job:update', { jobId, stepId, status, message });
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true }));
+        } catch (e) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid JSON body' }));
+        }
+      });
+      return;
+    }
+
+    // ── GET /api/job-status/:jobId ─ polling fallback ────────────────────────
+    const jobMatch = url.pathname.match(/^\/api\/job-status\/([^/]+)$/);
+    if (req.method === 'GET' && jobMatch) {
+      const job = jobStore.get(jobMatch[1]);
+      if (!job) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Job not found' }));
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(job));
+      return;
+    }
+
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Not found' }));
+  });
+
+  server.listen(3847, '127.0.0.1', () => {
+    console.log('[auto-code] Local callback server listening on http://127.0.0.1:3847');
+  });
+
+  server.on('error', (err) => {
+    console.error('[auto-code] Local server error:', err.message);
+  });
+
+  return server;
+}

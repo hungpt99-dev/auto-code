@@ -67,4 +67,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Apply a patch string to a repo using git apply (dry-run first)
   applyPatch: (repoPath, patchContent) =>
     ipcRenderer.invoke('workfolder:applyPatch', { repoPath, patchContent }),
+
+  // ── Workflow execution (n8n bridge) ───────────────────────────────────────
+  // Trigger a workflow execution via n8n; returns { success, jobId }
+  executeWorkflow: (params) =>
+    ipcRenderer.invoke('workflow:execute', params),
+
+  // Poll job status from the local in-memory store (fallback for polling)
+  getJobStatus: (jobId) =>
+    ipcRenderer.invoke('job:getStatus', { jobId }),
+
+  // Subscribe to real-time job updates pushed from the main process.
+  // n8n POSTs to the local callback server, which forwards via IPC.
+  // Returns an unsubscribe function — call it to remove the listener.
+  onJobUpdate: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('job:update', handler);
+    return () => ipcRenderer.removeListener('job:update', handler);
+  },
 });
