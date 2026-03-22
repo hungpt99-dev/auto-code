@@ -7,7 +7,7 @@ import { setGenerationResult } from './issuesSlice';
 
 export const startGeneration = createAsyncThunk(
   'ai/startGeneration',
-  async ({ issueKey, settings, language = 'javascript' }, { dispatch, rejectWithValue }) => {
+  async ({ issueKey, settings, language = 'javascript', taskType = 'code', selectedRepoPaths = [] }, { dispatch, rejectWithValue }) => {
     // Simulate step-by-step progress while the real n8n call is in-flight.
     // Each timer fires at the cumulative delay defined in STEP_TIMINGS_MS.
     const timers = STEP_TIMINGS_MS.slice(0, GENERATION_STEPS.length - 1).map((delay, idx) =>
@@ -15,6 +15,14 @@ export const startGeneration = createAsyncThunk(
     );
 
     const clearAll = () => timers.forEach(clearTimeout);
+
+    // Scan selected repos for context (non-fatal)
+    let repoContext = {};
+    if (selectedRepoPaths.length > 0 && window.electronAPI?.repoScanTree) {
+      try {
+        repoContext = await window.electronAPI.repoScanTree({ paths: selectedRepoPaths });
+      } catch { /* continue without repo context */ }
+    }
 
     try {
       const response = await axios.post(
@@ -24,13 +32,15 @@ export const startGeneration = createAsyncThunk(
           jiraUrl:    settings.jiraUrl,
           jiraEmail:  settings.jiraEmail,
           jiraToken:  settings.jiraToken,
-          // ── Multi-provider fields ────────────────────────────────────────
+          // ── Multi-provider fields ────────────────────────────────
           provider:   settings.aiProvider  || 'openai',
           model:      settings.aiModel     || null,
           openaiKey:  settings.openaiKey   || '',
           claudeKey:  settings.claudeKey   || '',
           geminiKey:  settings.geminiKey   || '',
           language,
+          taskType,
+          repoContext,
         },
         { timeout: 180_000, headers: { 'Content-Type': 'application/json' } }
       );

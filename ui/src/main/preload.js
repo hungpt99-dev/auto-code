@@ -47,4 +47,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── CLI tools (gh copilot, etc.) ────────────────────────────────────────
   cliRun: (params) =>
     ipcRenderer.invoke('cli:run', params),
-});
+  // ── Repo file-tree scanner (multi-repo context for code gen) ───────────
+  repoScanTree: (params) =>
+    ipcRenderer.invoke('repo:scanTree', params),});

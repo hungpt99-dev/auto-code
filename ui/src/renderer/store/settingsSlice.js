@@ -26,19 +26,24 @@ const settingsSlice = createSlice({
     aiModel: '',
     n8nUrl: 'http://localhost:5678',
     repoPath: '',
+    repos: [],
     loaded: false,
   },
   reducers: {},
   extraReducers: (builder) => {
     builder
-      .addCase(loadSettings.fulfilled, (state, action) => ({
-        ...state,
-        ...(action.payload || {}),
-        loaded: true,
-      }))
+      .addCase(loadSettings.fulfilled, (state, action) => {
+        const loaded = action.payload || {};
+        // Migrate legacy single repoPath → repos array
+        let repos = Array.isArray(loaded.repos) ? loaded.repos : [];
+        if (repos.length === 0 && loaded.repoPath) {
+          repos = [{ id: '1', name: 'Main Repo', path: loaded.repoPath }];
+        }
+        return { ...state, ...loaded, repos, loaded: true };
+      })
       .addCase(loadSettings.rejected, (state) => ({
         ...state,
-        loaded: true,  // allow form to render with defaults even if load fails
+        loaded: true,
       }))
       .addCase(saveSettings.fulfilled, (state, action) => ({
         ...state,

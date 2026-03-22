@@ -14,6 +14,7 @@ const DEFAULTS = {
   aiModel: '',
   n8nUrl: 'http://localhost:5678',
   repoPath: '',
+  repos: [],
 };
 
 export default function Settings() {
@@ -24,6 +25,7 @@ export default function Settings() {
   const [saved, setSaved] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
+  const [newRepo, setNewRepo] = useState({ name: '', path: '' });
 
   // Sync from store once loaded
   useEffect(() => {
@@ -39,6 +41,7 @@ export default function Settings() {
         aiModel:     current.aiModel     ?? '',
         n8nUrl:      current.n8nUrl      || 'http://localhost:5678',
         repoPath:    current.repoPath    ?? '',
+        repos:       Array.isArray(current.repos) ? current.repos : [],
       });
     }
   }, [current.loaded]);
@@ -264,13 +267,10 @@ export default function Settings() {
 
         {/* ── Git / Local Repo ── */}
         <section className="settings-section">
-          <h2>🗂️ Local Repository</h2>
+          <h2>🗂️ Local Repository (Git Panel)</h2>
           <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 16, lineHeight: 1.5 }}>
-            Point the app to your local git repo so the Git panel can run
-            <strong style={{ color: 'var(--text-primary)' }}> any</strong> local git command
-            (commit, branch, stash, apply patch, etc.).<br />
-            <span style={{ color: 'var(--warning)' }}>⚠️ git push is disabled</span> — code never
-            leaves your machine automatically.
+            The Git panel uses this path for all local git commands.
+            <span style={{ color: 'var(--warning)' }}> ⚠️ git push is disabled</span>.
           </p>
 
           <div className="form-group">
@@ -299,6 +299,82 @@ export default function Settings() {
               </button>
             </div>
             <span className="form-hint">Absolute path to your local git repository root.</span>
+          </div>
+        </section>
+
+        {/* ── Code Gen Repositories ── */}
+        <section className="settings-section">
+          <h2>📂 Code Generation Repositories</h2>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 16, lineHeight: 1.5 }}>
+            Add repos for the AI to analyze when generating code, tracing bugs, or doing code reviews.
+            The app reads the file tree of selected repos before calling the AI.
+          </p>
+
+          {form.repos.length > 0 && (
+            <div className="repo-list">
+              {form.repos.map((repo) => (
+                <div key={repo.id} className="repo-item">
+                  <div className="repo-item-info">
+                    <span className="repo-item-name">{repo.name}</span>
+                    <span className="repo-item-path">{repo.path}</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => setForm((prev) => ({
+                      ...prev,
+                      repos: prev.repos.filter((r) => r.id !== repo.id),
+                    }))}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="repo-add-form">
+            <input
+              className="input"
+              placeholder="Name (e.g. Backend API, Frontend)"
+              value={newRepo.name}
+              onChange={(e) => setNewRepo((p) => ({ ...p, name: e.target.value }))}
+            />
+            <div className="input-with-btn">
+              <input
+                className="input"
+                placeholder="C:\projects\your-repo"
+                value={newRepo.path}
+                onChange={(e) => setNewRepo((p) => ({ ...p, path: e.target.value }))}
+              />
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={async () => {
+                  const res = await window.electronAPI.selectFolder();
+                  if (res.success) setNewRepo((p) => ({ ...p, path: res.folderPath }));
+                }}
+              >
+                📁
+              </button>
+            </div>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={!newRepo.name.trim() || !newRepo.path.trim()}
+              onClick={() => {
+                setForm((prev) => ({
+                  ...prev,
+                  repos: [
+                    ...prev.repos,
+                    { id: Date.now().toString(), name: newRepo.name.trim(), path: newRepo.path.trim() },
+                  ],
+                }));
+                setNewRepo({ name: '', path: '' });
+              }}
+            >
+              + Add Repository
+            </button>
           </div>
         </section>
 

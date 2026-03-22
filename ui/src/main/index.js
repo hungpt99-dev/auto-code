@@ -23,6 +23,7 @@ const store = new Store({
       aiModel: '',
       n8nUrl: 'http://localhost:5678',
       repoPath: '',
+      repos: [],
     },
   },
 });
@@ -72,11 +73,22 @@ app.on('activate', () => {
 ipcMain.handle('settings:get', () => store.get('settings'));
 
 ipcMain.handle('settings:save', (_event, settings) => {
-  // Validate that we only persist expected keys (prevent prototype pollution)
-  const allowed = ['jiraUrl', 'jiraEmail', 'jiraToken', 'openaiKey', 'claudeKey', 'geminiKey', 'n8nUrl', 'repoPath', 'aiProvider', 'aiModel'];
-  const safe = Object.fromEntries(
-    Object.entries(settings).filter(([k]) => allowed.includes(k))
-  );
+  const allowedStr = ['jiraUrl', 'jiraEmail', 'jiraToken', 'openaiKey', 'claudeKey', 'geminiKey', 'n8nUrl', 'repoPath', 'aiProvider', 'aiModel'];
+  const safe = {};
+  for (const [k, v] of Object.entries(settings)) {
+    if (k === 'repos' && Array.isArray(v)) {
+      // Validate each repo entry
+      safe.repos = v
+        .filter((r) => r && typeof r.path === 'string' && r.path.trim())
+        .map((r) => ({
+          id:   String(r.id   || Date.now()).slice(0, 50),
+          name: String(r.name || 'Repo').slice(0, 100),
+          path: String(r.path).slice(0, 500),
+        }));
+    } else if (allowedStr.includes(k)) {
+      safe[k] = v;
+    }
+  }
   store.set('settings', safe);
   return { success: true };
 });
@@ -188,6 +200,44 @@ ipcMain.handle('dialog:selectFolder', async () => {
   });
   if (canceled || !filePaths.length) return { success: false, cancelled: true };
   return { success: true, folderPath: filePaths[0] };
+});
+
+// ─── IPC: Repo — scan file tree of one or more local repos ─────────────────
+ipcMain.handle('repo:scanTree', (_event, { paths }) => {
+  const IGNORE = new Set([
+    'node_modules', '.git', 'dist', 'build', 'target', 'out', '.next',
+    '__pycache__', 'vendor', '.gradle', 'coverage', '.nyc_output', '.cache',
+    'venv', '.venv', 'env', '.env', 'bin', 'obj',
+  ]);
+
+  function buildTree(dir, depth, prefix) {
+    if (depth < 0) return '';
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return ''; }
+    entries = entries
+      .filter((e) => !IGNORE.has(e.name) && !e.name.startsWith('.'))
+      .sort((a, b) => {
+        if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      })
+      .slice(0, 50);
+    return entries.map((e, i) => {
+      const last = i === entries.length - 1;
+      const line = prefix + (last ? '\u2514\u2500\u2500 ' : '\u251c\u2500\u2500 ') + e.name + (e.isDirectory() ? '/' : '');
+      if (e.isDirectory() && depth > 0) {
+        const sub = buildTree(path.join(dir, e.name), depth - 1, prefix + (last ? '    ' : '\u2502   '));
+        return sub ? line + '\n' + sub : line;
+      }
+      return line;
+    }).join('\n');
+  }
+
+  const result = {};
+  for (const repoPath of (Array.isArray(paths) ? paths : [])) {
+    if (!repoPath || !fs.existsSync(repoPath)) { result[repoPath] = '(path not found)'; continue; }
+    result[repoPath] = buildTree(repoPath, 3, '') || '(empty)';
+  }
+  return result;
 });
 
 // ─── IPC: Git — run local git command ────────────────────────────────────────

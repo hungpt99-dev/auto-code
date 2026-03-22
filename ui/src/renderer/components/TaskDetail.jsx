@@ -4,6 +4,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import { fetchIssueDetail } from '../store/issuesSlice';
 import { startGeneration, resetGeneration } from '../store/aiSlice';
 import { GENERATION_STEPS, PROVIDER_MAP } from '../constants/aiProviders';
+import { TASK_TYPES, LANG_AWARE_TASK_TYPES } from '../constants/taskTypes';
 import Loader from './Loader';
 
 const LANGUAGES = [
@@ -65,6 +66,19 @@ export default function TaskDetail() {
   const { generating, completedSteps, genError } = useSelector((s) => s.ai);
 
   const [language, setLanguage] = useState('javascript');
+  const [taskType, setTaskType] = useState('code');
+  const [selectedRepos, setSelectedRepos] = useState([]);
+
+  // Initialise repo selection when settings load
+  useEffect(() => {
+    setSelectedRepos((settings.repos || []).map((r) => r.path));
+  }, [(settings.repos || []).length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function toggleRepo(p) {
+    setSelectedRepos((prev) =>
+      prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]
+    );
+  }
 
   useEffect(() => {
     dispatch(
@@ -79,7 +93,13 @@ export default function TaskDetail() {
 
   async function handleGenerate() {
     dispatch(resetGeneration());
-    const result = await dispatch(startGeneration({ issueKey: key, settings, language }));
+    const result = await dispatch(startGeneration({
+      issueKey: key,
+      settings,
+      language,
+      taskType,
+      selectedRepoPaths: selectedRepos,
+    }));
     if (startGeneration.fulfilled.match(result)) {
       navigate(`/issue/${key}/result`);
     }
@@ -169,9 +189,59 @@ export default function TaskDetail() {
 
       <div className="generate-section">
         {/* Provider badge */}
-        {/* Language selector */}
-        <div style={{ marginBottom: 16 }}>
-          <label style={{ display: 'block', marginBottom: 6, fontSize: 13, color: 'var(--text-muted)' }}>
+        {/* Task type selector */}
+        <div style={{ width: '100%' }}>
+          <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.6px', marginBottom: 10 }}>
+            Task Type
+          </div>
+          <div className="task-type-grid">
+            {TASK_TYPES.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                className={`task-type-card ${taskType === t.id ? 'task-type-card--active' : ''}`}
+                style={taskType === t.id ? { '--task-color': t.color, borderColor: t.color } : {}}
+                onClick={() => setTaskType(t.id)}
+                disabled={generating}
+              >
+                <span className="task-type-icon">{t.icon}</span>
+                <div>
+                  <div className="task-type-name">{t.label}</div>
+                  <div className="task-type-desc">{t.desc}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Repo selector */}
+        {(settings.repos || []).length > 0 && (
+          <div style={{ width: '100%' }}>
+            <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.6px', marginBottom: 10 }}>
+              Repositories to analyze
+            </div>
+            <div className="repo-selector">
+              {(settings.repos || []).map((repo) => (
+                <label key={repo.id} className="repo-check-item" style={{ cursor: generating ? 'not-allowed' : 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedRepos.includes(repo.path)}
+                    onChange={() => !generating && toggleRepo(repo.path)}
+                    disabled={generating}
+                    style={{ accentColor: 'var(--accent)', width: 15, height: 15, flexShrink: 0 }}
+                  />
+                  <span className="repo-check-name">{repo.name}</span>
+                  <span className="repo-check-path">{repo.path}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Language selector — only for code/bug/test/refactor */}
+        {LANG_AWARE_TASK_TYPES.has(taskType) && (
+        <div style={{ marginBottom: 4, width: '100%' }}>
+          <label style={{ display: 'block', marginBottom: 6, fontSize: 12, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.6px' }}>
             Programming Language
           </label>
           <select
@@ -186,6 +256,7 @@ export default function TaskDetail() {
             ))}
           </select>
         </div>
+        )}
 
         {settings.aiProvider && (
           <div style={{ marginBottom: 10, fontSize: 13, color: 'var(--text-muted)' }}>
