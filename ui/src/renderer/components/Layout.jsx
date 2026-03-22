@@ -1,11 +1,11 @@
 import { NavLink, Outlet } from 'react-router-dom';
 
-const navItems = [
-  { to: '/',        label: 'Board',       icon: '📋', end: true  },
-  { to: '/list',    label: 'List',        icon: '☰',  end: false },
-  { to: '/ai',      label: 'AI Assistant',icon: '🤖', end: false },
-  { to: '/git',     label: 'Git',         icon: '🗂️', end: false },
-  { to: '/settings',label: 'Settings',   icon: '⚙️', end: false },
+const NAV = [
+  { to: '/',          label: 'Dashboard', icon: '◉',  end: true  },
+  { to: '/kanban',    label: 'Kanban',    icon: '▦',  end: false },
+  { to: '/workflows', label: 'Workflows', icon: '⬡',  end: false },
+  { to: '/history',   label: 'History',   icon: '⊞',  end: false },
+  { to: '/settings',  label: 'Settings',  icon: '⚙',  end: false },
 ];
 
 export default function Layout() {
@@ -13,12 +13,15 @@ export default function Layout() {
     <div className="app-layout">
       <aside className="sidebar">
         <div className="sidebar-brand">
-          <span className="brand-icon">⚡</span>
-          <span className="brand-name">Auto Code</span>
+          <div className="brand-logo">⚡</div>
+          <div className="brand-text">
+            <span className="brand-name">Auto Code</span>
+            <span className="brand-sub">AI Dev Assistant</span>
+          </div>
         </div>
 
         <nav className="sidebar-nav">
-          {navItems.map(({ to, label, icon, end }) => (
+          {NAV.map(({ to, label, icon, end }) => (
             <NavLink
               key={to}
               to={to}
@@ -32,7 +35,11 @@ export default function Layout() {
         </nav>
 
         <div className="sidebar-footer">
-          <span className="version">v1.1.0</span>
+          <div className="sidebar-status">
+            <span className="status-dot" />
+            <span className="status-text">Auto Code</span>
+          </div>
+          <span className="version-badge">v1.2.0</span>
         </div>
       </aside>
 

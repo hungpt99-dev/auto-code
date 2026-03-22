@@ -2,13 +2,12 @@ import { useEffect } from 'react';
 import { HashRouter, Routes, Route } from 'react-router-dom';
 import { useDispatch } from 'react-redux';
 import Layout from './components/Layout';
-import KanbanBoard from './components/KanbanBoard';
 import Dashboard from './components/Dashboard';
-import TaskDetail from './components/TaskDetail';
-import ResultScreen from './components/ResultScreen';
+import KanbanBoard from './components/KanbanBoard';
+import WorkflowsTab from './components/WorkflowsTab';
+import HistoryTab from './components/HistoryTab';
 import Settings from './components/Settings';
-import GitPanel from './components/GitPanel';
-import AiPanel from './components/AiPanel';
+import ResultScreen from './components/ResultScreen';
 import ErrorBoundary from './components/ErrorBoundary';
 import { loadSettings } from './store/settingsSlice';
 
@@ -24,13 +23,12 @@ export default function App() {
       <ErrorBoundary>
         <Routes>
           <Route path="/" element={<Layout />}>
-            <Route index element={<KanbanBoard />} />
-            <Route path="list" element={<Dashboard />} />
-            <Route path="issue/:key" element={<TaskDetail />} />
-            <Route path="issue/:key/result" element={<ResultScreen />} />
-            <Route path="git" element={<GitPanel />} />
-            <Route path="ai" element={<AiPanel />} />
+            <Route index element={<Dashboard />} />
+            <Route path="kanban" element={<KanbanBoard />} />
+            <Route path="workflows" element={<WorkflowsTab />} />
+            <Route path="history" element={<HistoryTab />} />
             <Route path="settings" element={<Settings />} />
+            <Route path="issue/:key/result" element={<ResultScreen />} />
           </Route>
         </Routes>
       </ErrorBoundary>
