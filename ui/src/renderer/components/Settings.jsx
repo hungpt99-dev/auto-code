@@ -2,6 +2,9 @@ import { useState, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { saveSettings } from '../store/settingsSlice';
 import { AI_PROVIDERS, PROVIDER_MAP } from '../constants/aiProviders';
+import { TASK_TYPES } from '../constants/taskTypes';
+
+const TASK_IDS = ['code', 'explain', 'bug', 'review', 'test', 'docs', 'refactor'];
 
 const DEFAULTS = {
   jiraUrl: '',
@@ -15,6 +18,7 @@ const DEFAULTS = {
   n8nUrl: 'http://localhost:5678',
   repoPath: '',
   repos: [],
+  workflowConfig: Object.fromEntries(TASK_IDS.map((id) => [id, ''])),
 };
 
 export default function Settings() {
@@ -42,6 +46,9 @@ export default function Settings() {
         n8nUrl:      current.n8nUrl      || 'http://localhost:5678',
         repoPath:    current.repoPath    ?? '',
         repos:       Array.isArray(current.repos) ? current.repos : [],
+        workflowConfig: Object.fromEntries(
+          TASK_IDS.map((id) => [id, current.workflowConfig?.[id] ?? ''])
+        ),
       });
     }
   }, [current.loaded]);
@@ -375,6 +382,43 @@ export default function Settings() {
             >
               + Add Repository
             </button>
+          </div>
+        </section>
+
+        {/* ── Workflow Configuration (per task type) ── */}
+        <section className="settings-section">
+          <h2>⚙️ Workflow Configuration</h2>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20, lineHeight: 1.6 }}>
+            Override the n8n webhook URL for each task type. Leave blank to use the global n8n URL.
+            Each task type can point to a different workflow or n8n instance.
+          </p>
+
+          <div className="workflow-config-grid">
+            {TASK_TYPES.map((t) => (
+              <div className="workflow-config-item" key={t.id}>
+                <div className="workflow-config-header">
+                  <span className="workflow-config-icon">{t.icon}</span>
+                  <div>
+                    <div className="workflow-config-name">{t.label}</div>
+                    <div className="workflow-config-desc">{t.desc}</div>
+                  </div>
+                </div>
+                <input
+                  className="input"
+                  type="url"
+                  placeholder={`${form.n8nUrl || 'http://localhost:5678'}/webhook/generate`}
+                  value={form.workflowConfig?.[t.id] ?? ''}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setForm((prev) => ({
+                      ...prev,
+                      workflowConfig: { ...prev.workflowConfig, [t.id]: val },
+                    }));
+                    setSaved(false);
+                  }}
+                />
+              </div>
+            ))}
           </div>
         </section>
 

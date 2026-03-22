@@ -49,4 +49,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('cli:run', params),
   // ── Repo file-tree scanner (multi-repo context for code gen) ───────────
   repoScanTree: (params) =>
-    ipcRenderer.invoke('repo:scanTree', params),});
+    ipcRenderer.invoke('repo:scanTree', params),
+
+  // ── Repo language detector (counts source file extensions) ──────────────
+  repoDetectLanguage: (params) =>
+    ipcRenderer.invoke('repo:detectLanguage', params),
+});

@@ -24,6 +24,7 @@ const store = new Store({
       n8nUrl: 'http://localhost:5678',
       repoPath: '',
       repos: [],
+      workflowConfig: {},
     },
   },
 });
@@ -74,6 +75,7 @@ ipcMain.handle('settings:get', () => store.get('settings'));
 
 ipcMain.handle('settings:save', (_event, settings) => {
   const allowedStr = ['jiraUrl', 'jiraEmail', 'jiraToken', 'openaiKey', 'claudeKey', 'geminiKey', 'n8nUrl', 'repoPath', 'aiProvider', 'aiModel'];
+  const TASK_IDS = ['code', 'explain', 'bug', 'review', 'test', 'docs', 'refactor'];
   const safe = {};
   for (const [k, v] of Object.entries(settings)) {
     if (k === 'repos' && Array.isArray(v)) {
@@ -85,6 +87,13 @@ ipcMain.handle('settings:save', (_event, settings) => {
           name: String(r.name || 'Repo').slice(0, 100),
           path: String(r.path).slice(0, 500),
         }));
+    } else if (k === 'workflowConfig' && v && typeof v === 'object' && !Array.isArray(v)) {
+      // Per-task-type webhook URL overrides — only allow known task IDs
+      const wc = {};
+      for (const tid of TASK_IDS) {
+        if (typeof v[tid] === 'string') wc[tid] = v[tid].slice(0, 500);
+      }
+      safe.workflowConfig = wc;
     } else if (allowedStr.includes(k)) {
       safe[k] = v;
     }
@@ -200,6 +209,55 @@ ipcMain.handle('dialog:selectFolder', async () => {
   });
   if (canceled || !filePaths.length) return { success: false, cancelled: true };
   return { success: true, folderPath: filePaths[0] };
+});
+
+// ─── IPC: Repo — detect dominant language from file extensions ───────────────
+ipcMain.handle('repo:detectLanguage', (_event, { paths }) => {
+  const EXT_TO_LANG = {
+    js: 'javascript', jsx: 'javascript', cjs: 'javascript', mjs: 'javascript',
+    ts: 'typescript', tsx: 'typescript',
+    py: 'python',
+    java: 'java',
+    cs: 'csharp',
+    go: 'go',
+    rs: 'rust',
+    php: 'php',
+    rb: 'ruby',
+    kt: 'kotlin', kts: 'kotlin',
+    swift: 'swift',
+    cpp: 'cpp', cc: 'cpp', cxx: 'cpp', c: 'cpp', h: 'cpp', hpp: 'cpp',
+  };
+  const IGNORE = new Set([
+    'node_modules', '.git', 'dist', 'build', 'target', 'out',
+    '__pycache__', 'vendor', '.gradle', 'coverage', 'venv', '.venv',
+  ]);
+
+  function countExtensions(dir, depth, counts) {
+    if (depth < 0) return;
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (IGNORE.has(e.name) || e.name.startsWith('.')) continue;
+      if (e.isDirectory()) {
+        countExtensions(path.join(dir, e.name), depth - 1, counts);
+      } else {
+        const ext = e.name.split('.').pop()?.toLowerCase();
+        if (ext && EXT_TO_LANG[ext]) {
+          counts[EXT_TO_LANG[ext]] = (counts[EXT_TO_LANG[ext]] || 0) + 1;
+        }
+      }
+    }
+  }
+
+  const totals = {};
+  for (const repoPath of (Array.isArray(paths) ? paths : [])) {
+    if (!repoPath || !fs.existsSync(repoPath)) continue;
+    countExtensions(repoPath, 4, totals);
+  }
+
+  if (!Object.keys(totals).length) return { language: null };
+  const top = Object.entries(totals).sort((a, b) => b[1] - a[1])[0];
+  return { language: top[0], counts: totals };
 });
 
 // ─── IPC: Repo — scan file tree of one or more local repos ─────────────────

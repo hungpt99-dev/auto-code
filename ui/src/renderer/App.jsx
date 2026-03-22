@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { HashRouter, Routes, Route } from 'react-router-dom';
 import { useDispatch } from 'react-redux';
 import Layout from './components/Layout';
+import KanbanBoard from './components/KanbanBoard';
 import Dashboard from './components/Dashboard';
 import TaskDetail from './components/TaskDetail';
 import ResultScreen from './components/ResultScreen';
@@ -14,7 +15,6 @@ import { loadSettings } from './store/settingsSlice';
 export default function App() {
   const dispatch = useDispatch();
 
-  // Load persisted settings from electron-store on startup
   useEffect(() => {
     dispatch(loadSettings());
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -24,7 +24,8 @@ export default function App() {
       <ErrorBoundary>
         <Routes>
           <Route path="/" element={<Layout />}>
-            <Route index element={<Dashboard />} />
+            <Route index element={<KanbanBoard />} />
+            <Route path="list" element={<Dashboard />} />
             <Route path="issue/:key" element={<TaskDetail />} />
             <Route path="issue/:key/result" element={<ResultScreen />} />
             <Route path="git" element={<GitPanel />} />

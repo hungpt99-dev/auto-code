@@ -1,10 +1,11 @@
 import { NavLink, Outlet } from 'react-router-dom';
 
 const navItems = [
-  { to: '/', label: '📋 Dashboard', end: true },
-  { to: '/ai', label: '🤖 AI Assistant', end: false },
-  { to: '/git', label: '🗂️ Git', end: false },
-  { to: '/settings', label: '⚙️ Settings', end: false },
+  { to: '/',        label: 'Board',       icon: '📋', end: true  },
+  { to: '/list',    label: 'List',        icon: '☰',  end: false },
+  { to: '/ai',      label: 'AI Assistant',icon: '🤖', end: false },
+  { to: '/git',     label: 'Git',         icon: '🗂️', end: false },
+  { to: '/settings',label: 'Settings',   icon: '⚙️', end: false },
 ];
 
 export default function Layout() {
@@ -17,20 +18,21 @@ export default function Layout() {
         </div>
 
         <nav className="sidebar-nav">
-          {navItems.map(({ to, label, end }) => (
+          {navItems.map(({ to, label, icon, end }) => (
             <NavLink
               key={to}
               to={to}
               end={end}
               className={({ isActive }) => `nav-item${isActive ? ' nav-item--active' : ''}`}
             >
-              {label}
+              <span className="nav-icon">{icon}</span>
+              <span className="nav-label">{label}</span>
             </NavLink>
           ))}
         </nav>
 
         <div className="sidebar-footer">
-          <span className="version">v1.0.0</span>
+          <span className="version">v1.1.0</span>
         </div>
       </aside>
 

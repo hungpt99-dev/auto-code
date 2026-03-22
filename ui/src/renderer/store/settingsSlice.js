@@ -27,6 +27,7 @@ const settingsSlice = createSlice({
     n8nUrl: 'http://localhost:5678',
     repoPath: '',
     repos: [],
+    workflowConfig: {},
     loaded: false,
   },
   reducers: {},
@@ -39,7 +40,11 @@ const settingsSlice = createSlice({
         if (repos.length === 0 && loaded.repoPath) {
           repos = [{ id: '1', name: 'Main Repo', path: loaded.repoPath }];
         }
-        return { ...state, ...loaded, repos, loaded: true };
+        const workflowConfig =
+          loaded.workflowConfig && typeof loaded.workflowConfig === 'object' && !Array.isArray(loaded.workflowConfig)
+            ? loaded.workflowConfig
+            : {};
+        return { ...state, ...loaded, repos, workflowConfig, loaded: true };
       })
       .addCase(loadSettings.rejected, (state) => ({
         ...state,

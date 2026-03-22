@@ -25,8 +25,12 @@ export const startGeneration = createAsyncThunk(
     }
 
     try {
+      // Resolve webhook URL: per-task-type override → global n8n URL
+      const customUrl = settings.workflowConfig?.[taskType]?.trim();
+      const webhookUrl = customUrl || `${settings.n8nUrl}/webhook/generate`;
+
       const response = await axios.post(
-        `${settings.n8nUrl}/webhook/generate`,
+        webhookUrl,
         {
           issueKey,
           jiraUrl:    settings.jiraUrl,
