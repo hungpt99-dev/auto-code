@@ -33,8 +33,12 @@ const settingsSlice = createSlice({
     builder
       .addCase(loadSettings.fulfilled, (state, action) => ({
         ...state,
-        ...action.payload,
+        ...(action.payload || {}),
         loaded: true,
+      }))
+      .addCase(loadSettings.rejected, (state) => ({
+        ...state,
+        loaded: true,  // allow form to render with defaults even if load fails
       }))
       .addCase(saveSettings.fulfilled, (state, action) => ({
         ...state,

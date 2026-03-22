@@ -17,7 +17,12 @@ const store = new Store({
       jiraEmail: '',
       jiraToken: '',
       openaiKey: '',
+      claudeKey: '',
+      geminiKey: '',
+      aiProvider: 'openai',
+      aiModel: '',
       n8nUrl: 'http://localhost:5678',
+      repoPath: '',
     },
   },
 });
@@ -79,19 +84,23 @@ ipcMain.handle('settings:save', (_event, settings) => {
 // ─── IPC: Jira — fetch issue list ────────────────────────────────────────────
 ipcMain.handle('jira:fetchIssues', async (_event, { jiraUrl, jiraEmail, jiraToken, jql, maxResults = 50 }) => {
   try {
-    const { data } = await axios.get(`${jiraUrl}/rest/api/3/search`, {
-      params: {
+    // Migrated from deprecated GET /rest/api/3/search to POST /rest/api/3/search/jql
+    const { data } = await axios.post(
+      `${jiraUrl}/rest/api/3/search/jql`,
+      {
         jql: jql || 'assignee = currentUser() ORDER BY updated DESC',
         maxResults,
-        fields: 'summary,status,issuetype,assignee,priority,updated',
+        fields: ['summary', 'status', 'issuetype', 'assignee', 'priority', 'updated'],
       },
-      auth: { username: jiraEmail, password: jiraToken },
-      headers: { Accept: 'application/json' },
-      timeout: 15000,
-    });
+      {
+        auth: { username: jiraEmail, password: jiraToken },
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        timeout: 15000,
+      },
+    );
     return { success: true, data };
   } catch (err) {
-    const message = err.response?.data?.errorMessages?.[0] || err.message;
+    const message = err.response?.data?.errorMessages?.[0] || err.response?.data?.message || err.message;
     return { success: false, error: message };
   }
 });
